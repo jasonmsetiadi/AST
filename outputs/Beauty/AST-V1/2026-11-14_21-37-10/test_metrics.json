@@ -1,0 +1,22 @@
+{
+  "category": "Beauty",
+  "variant": "AST-V1",
+  "m": 4,
+  "base": 4096,
+  "min_share_prob": 0.02,
+  "use_item_mass": false,
+  "test_loss": 2.2070119380950928,
+  "test_recall@5": 0.0476680230738273,
+  "test_recall@10": 0.0726646693198587,
+  "test_ndcg@5": 0.03242213067822832,
+  "test_ndcg@10": 0.04042561620869406,
+  "test_runtime": 60.4787,
+  "test_samples_per_second": 369.767,
+  "test_steps_per_second": 1.455,
+  "epoch": 190.0,
+  "val_recall@5": 0.06577829450431516,
+  "val_recall@10": 0.09372624424272236,
+  "val_ndcg@5": 0.045663134012957594,
+  "val_ndcg@10": 0.05463032273311922,
+  "best_epoch": 140.0
+}

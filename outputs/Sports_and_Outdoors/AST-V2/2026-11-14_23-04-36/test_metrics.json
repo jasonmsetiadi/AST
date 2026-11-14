@@ -1,0 +1,22 @@
+{
+  "category": "Sports_and_Outdoors",
+  "variant": "AST-V2",
+  "m": 5,
+  "base": 4096,
+  "min_share_prob": 0.02,
+  "use_item_mass": true,
+  "test_loss": 1.7967983484268188,
+  "test_recall@5": 0.028512837799876397,
+  "test_recall@10": 0.04137872914208664,
+  "test_ndcg@5": 0.018829634313837936,
+  "test_ndcg@10": 0.022993004538879674,
+  "test_runtime": 102.5645,
+  "test_samples_per_second": 347.079,
+  "test_steps_per_second": 1.365,
+  "epoch": 200.0,
+  "val_recall@5": 0.03837294230012922,
+  "val_recall@10": 0.05508736445867746,
+  "val_ndcg@5": 0.025852974092394017,
+  "val_ndcg@10": 0.031235672202946485,
+  "best_epoch": 150.0
+}
