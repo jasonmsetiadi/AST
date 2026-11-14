@@ -210,6 +210,7 @@ def build_item2tokseq_ids_silhouette_tree(
     weighted_silhouette: bool = True,          # mass-weighted silhouette; needs item_probs
 
     # tree behaviour
+    fixed_k: int | None = None,
     capacity_aware_min_k: bool = True,
     stop_recursion_if_no_split: bool = True,
 
@@ -596,15 +597,30 @@ def build_item2tokseq_ids_silhouette_tree(
             return
 
         X = embs[item_ids]
-        K_max = min(int(base), n - 1)  # silhouette needs K < n
-        min_k_eff = _capacity_lower_bound_k(n, level)
-        if K_max < max(2, min_k_eff):
-            leaf_counts[level] += 1
-            return
+        if fixed_k is not None:
+            K_target = min(int(fixed_k), n - 1)
+            min_k_eff = _capacity_lower_bound_k(n, level)
+            if K_target < max(2, min_k_eff):
+                leaf_counts[level] += 1
+                return
+            labels_raw = _regular_kmeans_labels(
+                X, int(K_target), seed=int(node_seed), max_iter=max_iter_kmeans, n_init=n_init_kmeans
+            )
+            diag = _split_stats(item_ids, labels_raw)
+            K = int(diag["K_eff"])
+            labels = np.asarray(diag["labels"], dtype=np.int32)
+            diag["assign_method"] = "kmeans"
+            diag["silhouette"] = float("nan")
+        else:
+            K_max = min(int(base), n - 1)  # silhouette needs K < n
+            min_k_eff = _capacity_lower_bound_k(n, level)
+            if K_max < max(2, min_k_eff):
+                leaf_counts[level] += 1
+                return
 
-        K, labels, diag = _pick_best_k(
-            X, item_ids, K_min=max(2, min_k_eff), K_max=K_max, seed_local=int(node_seed)
-        )
+            K, labels, diag = _pick_best_k(
+                X, item_ids, K_min=max(2, min_k_eff), K_max=K_max, seed_local=int(node_seed)
+            )
 
         if K <= 1 or labels is None or diag is None:
             leaf_counts[level] += 1

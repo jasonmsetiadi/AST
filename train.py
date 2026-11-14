@@ -102,6 +102,7 @@ def build_semantic_ids(cfg: DictConfig, id2text, tokenizer, item_probs, item_emb
         k_search_step=int(t.k_search_step),
         weighted_silhouette=bool(t.weighted_silhouette),
         # tree
+        fixed_k=None if getattr(t, "fixed_k", None) is None else int(t.fixed_k),
         capacity_aware_min_k=bool(t.capacity_aware_min_k),
         stop_recursion_if_no_split=bool(t.stop_recursion_if_no_split),
         # minimum-mass constraint

@@ -10,6 +10,7 @@ cache_embeddings: true             # cache item embeddings under <data.root>/emb
 sids_path: null                    # path to a saved item2tokseq_ids.pkl to skip building SIDs
 
 # ---- adaptive branching: K chosen per node by silhouette ----
+fixed_k: null                         # null for adaptive silhouette search, or integer (e.g. 32) for fixed-K HKMeans
 max_iter_kmeans: 50
 n_init_kmeans: 10
 silhouette_metric: euclidean
