@@ -15,6 +15,7 @@ import json
 import os
 import pickle
 import time
+from collections import Counter
 from pathlib import Path
 
 import hydra
@@ -179,13 +180,25 @@ def main(cfg: DictConfig) -> None:
         with open(out_dir / "item2tokseq_ids.pkl", "wb") as f:
             pickle.dump(item2tokseq_ids, f, protocol=pickle.HIGHEST_PROTOCOL)
         codes = list(item2tokseq_ids.values())
+        leaf_prefixes = [tuple(c[:-1]) for c in codes]
+        leaf_counts = list(Counter(leaf_prefixes).values())
         stats = {
             "n_items": len(codes),
             "n_unique_sids": len({tuple(c) for c in codes}),
             **{f"prefixes_len{l}": len({tuple(c[:l]) for c in codes}) for l in range(1, M)},
             "build_seconds": round(sid_seconds, 1),
+            "n_leaf_clusters": len(leaf_counts),
+            "items_per_leaf_mean": round(float(np.mean(leaf_counts)), 2),
+            "items_per_leaf_std": round(float(np.std(leaf_counts)), 2),
+            "items_per_leaf_min": int(np.min(leaf_counts)),
+            "items_per_leaf_median": float(np.median(leaf_counts)),
+            "items_per_leaf_max": int(np.max(leaf_counts)),
+            "items_per_leaf_p25": float(np.percentile(leaf_counts, 25)),
+            "items_per_leaf_p75": float(np.percentile(leaf_counts, 75)),
+            "leaf_sizes": leaf_counts,
         }
-        print(f"[AST] {stats}")
+        summary = {k: v for k, v in stats.items() if k != "leaf_sizes"}
+        print(f"[AST] {summary}")
         with open(out_dir / "sids_stats.json", "w") as f:
             json.dump(stats, f, indent=2)
         if cfg.stop_after == "sids":
