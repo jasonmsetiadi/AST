@@ -1,0 +1,22 @@
+{
+  "category": "Beauty",
+  "variant": "AST-Density",
+  "m": 4,
+  "base": 4096,
+  "min_share_prob": null,
+  "use_item_mass": false,
+  "test_loss": 2.2704803943634033,
+  "test_recall@5": 0.047355006036757144,
+  "test_recall@10": 0.07033939990162322,
+  "test_ndcg@5": 0.03222815536160756,
+  "test_ndcg@10": 0.039665030336371705,
+  "test_runtime": 48.6305,
+  "test_samples_per_second": 459.855,
+  "test_steps_per_second": 1.81,
+  "epoch": 270.0,
+  "val_recall@5": 0.06613602826096678,
+  "val_recall@10": 0.09457586191476994,
+  "val_ndcg@5": 0.04542813754334755,
+  "val_ndcg@10": 0.05458350617186819,
+  "best_epoch": 220.0
+}
