@@ -1,0 +1,22 @@
+{
+  "category": "Beauty",
+  "variant": "HKMeans-8",
+  "m": 4,
+  "base": 4096,
+  "min_share_prob": null,
+  "use_item_mass": false,
+  "test_loss": 2.193533420562744,
+  "test_recall@5": 0.04851764074587488,
+  "test_recall@10": 0.0712784510128337,
+  "test_ndcg@5": 0.03341077344600192,
+  "test_ndcg@10": 0.040727414517267295,
+  "test_runtime": 48.39,
+  "test_samples_per_second": 462.141,
+  "test_steps_per_second": 1.819,
+  "epoch": 220.0,
+  "val_recall@5": 0.06568886106515226,
+  "val_recall@10": 0.093592094083978,
+  "val_ndcg@5": 0.045263779798082576,
+  "val_ndcg@10": 0.054253808261947936,
+  "best_epoch": 170.0
+}
