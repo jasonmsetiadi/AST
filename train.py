@@ -104,6 +104,11 @@ def build_semantic_ids(cfg: DictConfig, id2text, tokenizer, item_probs, item_emb
         weighted_silhouette=bool(t.weighted_silhouette),
         # tree
         fixed_k=None if getattr(t, "fixed_k", None) is None else int(t.fixed_k),
+        density_driven_k=bool(getattr(t, "density_driven_k", False)),
+        target_items_per_leaf=float(getattr(t, "target_items_per_leaf", 3.0)),
+        k_window_delta=int(getattr(t, "k_window_delta", 2)),
+        k_cap=int(getattr(t, "k_cap", 64)),
+        min_items_to_split=int(getattr(t, "min_items_to_split", 3)),
         capacity_aware_min_k=bool(t.capacity_aware_min_k),
         stop_recursion_if_no_split=bool(t.stop_recursion_if_no_split),
         # minimum-mass constraint

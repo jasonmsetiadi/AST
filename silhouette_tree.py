@@ -211,6 +211,11 @@ def build_item2tokseq_ids_silhouette_tree(
 
     # tree behaviour
     fixed_k: int | None = None,
+    density_driven_k: bool = False,
+    target_items_per_leaf: float = 3.0,
+    k_window_delta: int = 2,
+    k_cap: int = 64,
+    min_items_to_split: int = 3,
     capacity_aware_min_k: bool = True,
     stop_recursion_if_no_split: bool = True,
 
@@ -595,6 +600,9 @@ def build_item2tokseq_ids_silhouette_tree(
         if n <= 1:
             leaf_counts[level] += 1
             return
+        if density_driven_k and n <= int(min_items_to_split):
+            leaf_counts[level] += 1
+            return
 
         X = embs[item_ids]
         if fixed_k is not None:
@@ -611,6 +619,20 @@ def build_item2tokseq_ids_silhouette_tree(
             labels = np.asarray(diag["labels"], dtype=np.int32)
             diag["assign_method"] = "kmeans"
             diag["silhouette"] = float("nan")
+        elif density_driven_k:
+            remaining_levels = max(1, L - level)
+            K_star = (float(n) / max(1.0, float(target_items_per_leaf))) ** (1.0 / float(remaining_levels))
+            max_allowed = min(int(k_cap), n - 1, int(base))
+            if max_allowed < 2:
+                leaf_counts[level] += 1
+                return
+            K_star_clamped = int(np.clip(round(K_star), 2, max_allowed))
+            K_min = max(2, K_star_clamped - int(k_window_delta))
+            K_max = min(max_allowed, K_star_clamped + int(k_window_delta))
+
+            K, labels, diag = _pick_best_k(
+                X, item_ids, K_min=K_min, K_max=K_max, seed_local=int(node_seed)
+            )
         else:
             K_max = min(int(base), n - 1)  # silhouette needs K < n
             min_k_eff = _capacity_lower_bound_k(n, level)

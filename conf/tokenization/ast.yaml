@@ -11,6 +11,11 @@ sids_path: null                    # path to a saved item2tokseq_ids.pkl to skip
 
 # ---- adaptive branching: K chosen per node by silhouette ----
 fixed_k: null                         # null for adaptive silhouette search, or integer (e.g. 32) for fixed-K HKMeans
+density_driven_k: false                # true to anchor candidate K range to node density
+target_items_per_leaf: 3.0            # tau*: target items per leaf cluster
+k_window_delta: 2                     # delta: sweeps [K* - delta, K* + delta]
+k_cap: 64                             # safety ceiling for any single split
+min_items_to_split: 3                 # nodes with <= min_items_to_split stop splitting early
 max_iter_kmeans: 50
 n_init_kmeans: 10
 silhouette_metric: euclidean
