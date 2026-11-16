@@ -109,6 +109,9 @@ def build_semantic_ids(cfg: DictConfig, id2text, tokenizer, item_probs, item_emb
         k_window_delta=int(getattr(t, "k_window_delta", 2)),
         k_cap=int(getattr(t, "k_cap", 64)),
         min_items_to_split=int(getattr(t, "min_items_to_split", 3)),
+        adaptive_depth=bool(getattr(t, "adaptive_depth", False)),
+        max_depth=int(getattr(t, "max_depth", 6)),
+        max_items_per_leaf=int(getattr(t, "max_items_per_leaf", 4)),
         capacity_aware_min_k=bool(t.capacity_aware_min_k),
         stop_recursion_if_no_split=bool(t.stop_recursion_if_no_split),
         # minimum-mass constraint
@@ -127,6 +130,7 @@ def build_semantic_ids(cfg: DictConfig, id2text, tokenizer, item_probs, item_emb
         # logging
         print_each_clustering=bool(t.print_each_clustering),
         print_stats=bool(t.print_stats),
+        return_tree_stats=True,
     )
 
 
@@ -158,9 +162,21 @@ def main(cfg: DictConfig) -> None:
     dd = tokenize_splits(dd, item2token)
 
     # ---- code-token vocabulary: <c{level}_{k}> for level < m, k < base ----
-    BASE, M = int(cfg.tokenization.base), int(cfg.tokenization.m)
+    BASE = int(cfg.tokenization.base)
+    is_ragged = bool(getattr(cfg.tokenization, "adaptive_depth", False))
+    if is_ragged:
+        max_depth = int(getattr(cfg.tokenization, "max_depth", 6))
+        TOTAL_LEVELS = max_depth + 1
+        eff_M = None
+        max_new_tokens = TOTAL_LEVELS
+    else:
+        M = int(cfg.tokenization.m)
+        TOTAL_LEVELS = M
+        eff_M = M
+        max_new_tokens = M
+
     tokenizer = build_contiguous_wordlevel_tokenizer(
-        [f"<c{lvl}_{i}>" for lvl in range(M) for i in range(BASE)], padding_side="left"
+        [f"<c{lvl}_{i}>" for lvl in range(TOTAL_LEVELS) for i in range(BASE)], padding_side="left"
     )
     pad_id, eos_id = tokenizer.pad_token_id, tokenizer.eos_token_id
 
@@ -180,7 +196,11 @@ def main(cfg: DictConfig) -> None:
         if len(item_probs) < len(id2text):  # items never seen in train get zero mass
             item_probs = np.pad(item_probs, (0, len(id2text) - len(item_probs)))
         t0 = time.time()
-        item2tokseq_ids = build_semantic_ids(cfg, id2text, tokenizer, item_probs, item_embs)
+        res = build_semantic_ids(cfg, id2text, tokenizer, item_probs, item_embs)
+        if isinstance(res, tuple):
+            item2tokseq_ids, tree_stats = res
+        else:
+            item2tokseq_ids, tree_stats = res, {}
         sid_seconds = time.time() - t0
         with open(out_dir / "item2tokseq_ids.pkl", "wb") as f:
             pickle.dump(item2tokseq_ids, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -190,7 +210,11 @@ def main(cfg: DictConfig) -> None:
         stats = {
             "n_items": len(codes),
             "n_unique_sids": len({tuple(c) for c in codes}),
-            **{f"prefixes_len{l}": len({tuple(c[:l]) for c in codes}) for l in range(1, M)},
+            **({f"prefixes_len{l}": len({tuple(c[:l]) for c in codes}) for l in range(1, TOTAL_LEVELS)} if not is_ragged else {
+                "sid_len_min": int(np.min([len(c) for c in codes])),
+                "sid_len_median": float(np.median([len(c) for c in codes])),
+                "sid_len_max": int(np.max([len(c) for c in codes])),
+            }),
             "build_seconds": round(sid_seconds, 1),
             "n_leaf_clusters": len(leaf_counts),
             "items_per_leaf_mean": round(float(np.mean(leaf_counts)), 2),
@@ -202,7 +226,8 @@ def main(cfg: DictConfig) -> None:
             "items_per_leaf_p75": float(np.percentile(leaf_counts, 75)),
             "leaf_sizes": leaf_counts,
         }
-        summary = {k: v for k, v in stats.items() if k != "leaf_sizes"}
+        stats.update(tree_stats)
+        summary = {k: v for k, v in stats.items() if k not in ("leaf_sizes", "split_records")}
         print(f"[AST] {summary}")
         with open(out_dir / "sids_stats.json", "w") as f:
             json.dump(stats, f, indent=2)
@@ -210,7 +235,7 @@ def main(cfg: DictConfig) -> None:
             return
 
     # ---- seq2seq examples ----
-    tokenize_fn = make_seq2seq_tokenize_fn(item2tokseq_ids=item2tokseq_ids, M=M)
+    tokenize_fn = make_seq2seq_tokenize_fn(item2tokseq_ids=item2tokseq_ids, M=eff_M, eos_id=eos_id if is_ragged else None)
     tokenized = {
         split: dd[split].map(tokenize_fn, remove_columns=list(cfg.data.remove_cols))
         for split in ["train", "validation", "test"]
@@ -239,15 +264,15 @@ def main(cfg: DictConfig) -> None:
     gen.num_beams = int(cfg.generation.num_beams)
     gen.num_return_sequences = int(cfg.generation.num_return_sequences)
     gen.do_sample = bool(cfg.generation.do_sample)
-    gen.max_new_tokens = M
-    gen.min_new_tokens = M
+    gen.max_new_tokens = max_new_tokens
+    gen.min_new_tokens = 2 if is_ragged else eff_M
 
     prefix_allowed_tokens = make_prefix_allowed_tokens_fn(
-        build_item_code_trie(item2tokseq_ids),
+        build_item_code_trie(item2tokseq_ids, eos_id=eos_id if is_ragged else None),
         pad_id=pad_id,
         eos_id=eos_id,
         decoder_start_id=model.config.decoder_start_token_id,
-        M=M,
+        M=eff_M,
     )
 
     # ---- training ----
@@ -283,10 +308,17 @@ def main(cfg: DictConfig) -> None:
         ),
         train_dataset=train_ds,
         eval_dataset=tokenized["validation"],
-        compute_metrics=build_code_metrics(item2tokseq_ids=item2tokseq_ids, pad_id=pad_id, M=M, k_values=(5, 10)),
+        compute_metrics=build_code_metrics(
+            item2tokseq_ids=item2tokseq_ids,
+            pad_id=pad_id,
+            M=eff_M,
+            eos_id=eos_id if is_ragged else None,
+            k_values=(5, 10),
+        ),
         callbacks=callbacks,
         prefix_allowed_tokens_fn=prefix_allowed_tokens,
-        gen_M=M,
+        gen_M=eff_M,
+        max_new_tokens=max_new_tokens,
     )
     if cfg.debug.stop_at_step is not None:
         trainer.add_callback(_StopAtStep(int(cfg.debug.stop_at_step)))

@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import random
 from collections import Counter
-from typing import Dict, List, Union
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 import torch
@@ -124,20 +124,23 @@ def build_contiguous_wordlevel_tokenizer(
     return tokenizer
 
 
-def make_seq2seq_tokenize_fn(*, item2tokseq_ids: Dict[int, List[int]], M: int):
+def make_seq2seq_tokenize_fn(*, item2tokseq_ids: Dict[int, List[int]], M: Optional[int] = None, eos_id: Optional[int] = None):
     """Encoder input = concatenated semantic IDs of the history; decoder target = SID of the next item."""
 
     def fn(ex):
         input_ids: List[int] = []
         for h in ex.get("history") or []:
             code = item2tokseq_ids[h]
-            if len(code) != M:
+            if M is not None and len(code) != M:
                 raise ValueError(f"history item {h} code length={len(code)} != M={M}")
             input_ids.extend(code)
 
-        labels = item2tokseq_ids[ex["label"]]
-        if len(labels) != M:
-            raise ValueError(f"target item {ex['label']} code length={len(labels)} != M={M}")
+        code_label = item2tokseq_ids[ex["label"]]
+        if M is not None and len(code_label) != M:
+            raise ValueError(f"target item {ex['label']} code length={len(code_label)} != M={M}")
+        labels = list(code_label)
+        if eos_id is not None:
+            labels.append(int(eos_id))
 
         return {"input_ids": input_ids, "attention_mask": [1] * len(input_ids), "labels": labels}
 

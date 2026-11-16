@@ -12,7 +12,8 @@ def build_code_metrics(
     *,
     item2tokseq_ids: Dict[int, List[int]],
     pad_id: int,
-    M: int,
+    M: Optional[int] = None,
+    eos_id: Optional[int] = None,
     k_values=(5, 10),
     ign_id: int = -100,
     debug: bool = False,
@@ -34,11 +35,19 @@ def build_code_metrics(
 
     def _clean_to_code(seq: List[int]) -> Optional[Tuple[int, ...]]:
         seq = [int(x) for x in seq]
-        if seq and seq[0] == pad_id:  # strip the decoder-start token
+        while seq and seq[0] == pad_id:  # strip the decoder-start token / pad
             seq = seq[1:]
-        if len(seq) < M:
-            return None
-        return tuple(seq[:M])
+        if M is not None:
+            if len(seq) < M:
+                return None
+            return tuple(seq[:M])
+        else:
+            cleaned = []
+            for t in seq:
+                if t == pad_id or (eos_id is not None and t == eos_id):
+                    break
+                cleaned.append(t)
+            return tuple(cleaned) if cleaned else None
 
     def _ndcg_at_k(pred_items: List[int], gt: int, k: int) -> float:
         try:
@@ -63,8 +72,11 @@ def build_code_metrics(
 
         gt_items: List[Optional[int]] = [None] * N
         for i in range(N):
-            lab = [int(x) for x in labels[i].tolist() if int(x) != ign_id]
-            if len(lab) == M:
+            lab = [int(x) for x in labels[i].tolist() if int(x) != ign_id and (eos_id is None or int(x) != eos_id)]
+            if M is not None:
+                if len(lab) == M:
+                    gt_items[i] = code2item.get(tuple(lab))
+            else:
                 gt_items[i] = code2item.get(tuple(lab))
 
         if preds.ndim == 3:  # (N, R, L)

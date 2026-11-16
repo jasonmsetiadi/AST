@@ -16,6 +16,11 @@ target_items_per_leaf: 3.0            # tau*: target items per leaf cluster
 k_window_delta: 2                     # delta: sweeps [K* - delta, K* + delta]
 k_cap: 64                             # safety ceiling for any single split
 min_items_to_split: 3                 # nodes with <= min_items_to_split stop splitting early
+# ---- adaptive depth (variable-length ragged tree) ----
+adaptive_depth: false                 # true for variable-depth tree stopping when n <= max_items_per_leaf
+max_depth: 6                          # maximum tree depth ceiling
+max_items_per_leaf: 4                 # tau_stop: stop splitting when cluster size <= max_items_per_leaf
+
 max_iter_kmeans: 50
 n_init_kmeans: 10
 silhouette_metric: euclidean

@@ -43,13 +43,15 @@ def build_t5_seq2seq(
 # ---------------------------------------------------------------------------
 # Constrained decoding: only real item codes can be generated
 # ---------------------------------------------------------------------------
-def build_item_code_trie(item2tokseq_ids: Dict[int, List[int]]) -> Dict:
+def build_item_code_trie(item2tokseq_ids: Dict[int, List[int]], eos_id: Optional[int] = None) -> Dict:
     trie: Dict = {}
     for item, seq in item2tokseq_ids.items():
         node = trie
         for t in seq:
             node = node.setdefault(int(t), {})
         node["_item"] = int(item)  # terminal marker (not a token id)
+        if eos_id is not None:
+            node[int(eos_id)] = {"_item": int(item)}
     return trie
 
 
@@ -63,7 +65,9 @@ def trie_allowed_next(trie: Dict, prefix: List[int]) -> Optional[List[int]]:
     return [k for k in node.keys() if isinstance(k, int)]
 
 
-def make_prefix_allowed_tokens_fn(trie: Dict, *, pad_id: int, eos_id: int, decoder_start_id: Optional[int], M: int):
+def make_prefix_allowed_tokens_fn(
+    trie: Dict, *, pad_id: int, eos_id: int, decoder_start_id: Optional[int], M: Optional[int] = None
+):
     """`prefix_allowed_tokens_fn` for `generate`: next tokens that keep the prefix inside the trie."""
 
     def fn(batch_id: int, input_ids: torch.Tensor) -> List[int]:
@@ -78,12 +82,16 @@ def make_prefix_allowed_tokens_fn(trie: Dict, *, pad_id: int, eos_id: int, decod
         while prefix and prefix[0] == pad_id:
             prefix = prefix[1:]
 
-        if len(prefix) >= M:
+        if M is not None and len(prefix) >= M:
             allowed = [int(eos_id)]
         else:
             allowed = trie_allowed_next(trie, prefix) or [int(eos_id)]
-        # generation length is fixed to M, so EOS is never needed
-        return [t for t in allowed if int(t) != int(eos_id)]
+
+        if M is not None:
+            # generation length is fixed to M, so EOS is never needed
+            return [t for t in allowed if int(t) != int(eos_id)]
+        else:
+            return allowed
 
     return fn
 
@@ -91,10 +99,13 @@ def make_prefix_allowed_tokens_fn(trie: Dict, *, pad_id: int, eos_id: int, decod
 class TrieConstrainedSeq2SeqTrainer(Seq2SeqTrainer):
     """Seq2SeqTrainer whose generation (eval / predict) is always trie-constrained and exactly M tokens long."""
 
-    def __init__(self, *args, prefix_allowed_tokens_fn=None, gen_M: int = 4, **kwargs):
+    def __init__(
+        self, *args, prefix_allowed_tokens_fn=None, gen_M: Optional[int] = 4, max_new_tokens: int = 10, **kwargs
+    ):
         super().__init__(*args, **kwargs)
         self._prefix_allowed_tokens_fn = prefix_allowed_tokens_fn
         self._gen_M = gen_M
+        self._max_new_tokens = max_new_tokens
 
     def prediction_step(self, model, inputs, prediction_loss_only, ignore_keys=None):
         model.eval()
@@ -112,8 +123,12 @@ class TrieConstrainedSeq2SeqTrainer(Seq2SeqTrainer):
         gen_kwargs = getattr(self, "_gen_kwargs", {}).copy()
         if self._prefix_allowed_tokens_fn is not None:
             gen_kwargs["prefix_allowed_tokens_fn"] = self._prefix_allowed_tokens_fn
-        gen_kwargs["max_new_tokens"] = self._gen_M
-        gen_kwargs["min_new_tokens"] = self._gen_M
+        if self._gen_M is not None:
+            gen_kwargs["max_new_tokens"] = self._gen_M
+            gen_kwargs["min_new_tokens"] = self._gen_M
+        else:
+            gen_kwargs["max_new_tokens"] = self._max_new_tokens
+            gen_kwargs["min_new_tokens"] = 2
 
         with torch.no_grad():
             generated = model.generate(

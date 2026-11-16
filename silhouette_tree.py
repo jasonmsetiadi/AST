@@ -216,6 +216,9 @@ def build_item2tokseq_ids_silhouette_tree(
     k_window_delta: int = 2,
     k_cap: int = 64,
     min_items_to_split: int = 3,
+    adaptive_depth: bool = False,
+    max_depth: int = 6,
+    max_items_per_leaf: int = 4,
     capacity_aware_min_k: bool = True,
     stop_recursion_if_no_split: bool = True,
 
@@ -238,7 +241,8 @@ def build_item2tokseq_ids_silhouette_tree(
     print_each_clustering: bool = True,
     print_stats: bool = True,
     show_examples: int = 5,
-) -> dict[int, list[int]]:
+    return_tree_stats: bool = False,
+) -> dict[int, list[int]] | tuple[dict[int, list[int]], dict]:
     """
     Build AST semantic IDs. Returns ``item_id -> [token_id] * m`` (unique per item).
 
@@ -306,9 +310,10 @@ def build_item2tokseq_ids_silhouette_tree(
     # ------------------------------------------------------------------
     # 2) token ids for all m levels: level l uses its own vocabulary <cl_0> .. <cl_{B-1}>
     # ------------------------------------------------------------------
-    flat_tokens = [f"<c{lvl}_{i}>" for lvl in range(m) for i in range(base)]
+    num_token_levels = max(m, int(max_depth) + 1) if adaptive_depth else m
+    flat_tokens = [f"<c{lvl}_{i}>" for lvl in range(num_token_levels) for i in range(base)]
     flat_ids = _token_ids(tokenizer, flat_tokens)
-    tok_ids = [flat_ids[lvl * base:(lvl + 1) * base] for lvl in range(m)]
+    tok_ids = [flat_ids[lvl * base:(lvl + 1) * base] for lvl in range(num_token_levels)]
 
     # ------------------------------------------------------------------
     # 3) prefix codes, built top-down
@@ -318,6 +323,8 @@ def build_item2tokseq_ids_silhouette_tree(
     chosen_k_hist = [defaultdict(int) for _ in range(L)]
     node_counts = np.zeros(L, dtype=np.int64)
     leaf_counts = np.zeros(L, dtype=np.int64)
+    split_records: list[dict] = []
+    split_sils_by_level: dict[int, list[float]] = defaultdict(list)
 
     def _silhouette(X, labels, *, sample_size, seed_for_sample, weights=None) -> float:
         """(Weighted) mean silhouette of a split; NaN if undefined.
@@ -618,7 +625,10 @@ def build_item2tokseq_ids_silhouette_tree(
             K = int(diag["K_eff"])
             labels = np.asarray(diag["labels"], dtype=np.int32)
             diag["assign_method"] = "kmeans"
-            diag["silhouette"] = float("nan")
+            sil_calc = _silhouette(
+                X, labels, sample_size=silhouette_sample_size, seed_for_sample=int(node_seed) + 99991
+            )
+            diag["silhouette"] = float(sil_calc)
         elif density_driven_k:
             remaining_levels = max(1, L - level)
             K_star = (float(n) / max(1.0, float(target_items_per_leaf))) ** (1.0 / float(remaining_levels))
@@ -667,6 +677,16 @@ def build_item2tokseq_ids_silhouette_tree(
                 f"| parent_prob={float(diag['parent_mass_global']):.8f}{extra}"
             )
 
+        sil_val = float(diag.get("silhouette", float("nan")))
+        if np.isfinite(sil_val):
+            split_sils_by_level[int(level)].append(sil_val)
+            split_records.append({
+                "level": int(level),
+                "n": int(n),
+                "K": int(K),
+                "silhouette": round(float(sil_val), 5),
+            })
+
         codes[level][item_ids] = labels
         split_counts[level] += 1
         chosen_k_hist[level][int(K)] += 1
@@ -676,6 +696,75 @@ def build_item2tokseq_ids_silhouette_tree(
             if child_ids.size == 0:
                 continue
             _recurse(level + 1, child_ids, node_seed=int(node_seed) + 131 + 17 * c)
+
+    if adaptive_depth:
+        # Variable-depth tree (AST-Ragged)
+        max_d = int(max_depth)
+        tau_stop = int(max_items_per_leaf)
+        suffix_lvl = max_d
+        ragged_item2tokseq_ids: dict[int, list[int]] = {}
+        leaf_sizes_list: list[int] = []
+        depth_hist = defaultdict(int)
+
+        def _recurse_ragged(level: int, item_ids: np.ndarray, current_prefix: list[int], node_seed: int):
+            n = int(item_ids.size)
+            if n <= 0:
+                return
+
+            # Stopping condition: reached small cluster size or hit max_depth ceiling
+            if n <= tau_stop or level >= max_d:
+                depth_hist[level] += 1
+                leaf_sizes_list.append(n)
+                for j, item_id in enumerate(sorted(item_ids.tolist())):
+                    # disambiguation token from suffix_lvl
+                    ragged_item2tokseq_ids[item_id] = list(current_prefix) + [tok_ids[suffix_lvl][j]]
+                return
+
+            X = embs[item_ids]
+            K_max = min(int(base), n - 1)
+            K, labels, diag = _pick_best_k(
+                X, item_ids, K_min=2, K_max=K_max, seed_local=int(node_seed)
+            )
+
+            if K <= 1 or labels is None or diag is None:
+                depth_hist[level] += 1
+                leaf_sizes_list.append(n)
+                for j, item_id in enumerate(sorted(item_ids.tolist())):
+                    ragged_item2tokseq_ids[item_id] = list(current_prefix) + [tok_ids[suffix_lvl][j]]
+                return
+
+            sil_val = float(diag.get("silhouette", float("nan")))
+            if np.isfinite(sil_val):
+                split_sils_by_level[int(level)].append(sil_val)
+                split_records.append({
+                    "level": int(level),
+                    "n": int(n),
+                    "K": int(K),
+                    "silhouette": round(float(sil_val), 5),
+                })
+
+            if print_each_clustering:
+                sil_str = f"{sil_val:.5f}" if np.isfinite(sil_val) else "nan"
+                print(f"{'  ' * int(level)}[ragged-split] lvl={level} n={n} K={int(K)} | sil={sil_str}")
+
+            for c in range(int(K)):
+                child_ids = item_ids[labels == c]
+                if child_ids.size == 0:
+                    continue
+                next_tok = tok_ids[level][c]
+                _recurse_ragged(level + 1, child_ids, current_prefix + [next_tok], int(node_seed) + 131 + 17 * c)
+
+        _recurse_ragged(0, np.arange(N, dtype=np.int32), [], int(seed))
+
+        if print_stats:
+            lengths = [len(seq) for seq in ragged_item2tokseq_ids.values()]
+            print(f"[AST-Ragged] total_items={len(ragged_item2tokseq_ids)} | total_leaves={len(leaf_sizes_list)}")
+            print(f"[AST-Ragged] depth_distribution (leaves per depth): {dict(sorted(depth_hist.items()))}")
+            print(f"[AST-Ragged] SID length min={min(lengths)}, median={np.median(lengths)}, max={max(lengths)}")
+
+        if return_tree_stats:
+            return ragged_item2tokseq_ids, _build_tree_stats()
+        return ragged_item2tokseq_ids
 
     _recurse(0, np.arange(N, dtype=np.int32), node_seed=int(seed))
 
@@ -736,4 +825,6 @@ def build_item2tokseq_ids_silhouette_tree(
         else:
             print("[sid-collision AFTER suffix] none")
 
+    if return_tree_stats:
+        return item2tokseq_ids, _build_tree_stats()
     return item2tokseq_ids
