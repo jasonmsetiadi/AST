@@ -326,6 +326,28 @@ def build_item2tokseq_ids_silhouette_tree(
     split_records: list[dict] = []
     split_sils_by_level: dict[int, list[float]] = defaultdict(list)
 
+    def _build_tree_stats() -> dict:
+        all_sils = [r["silhouette"] for r in split_records if np.isfinite(r["silhouette"])]
+        return {
+            "silhouette_overall_mean": round(float(np.mean(all_sils)), 4) if all_sils else None,
+            "silhouette_overall_median": round(float(np.median(all_sils)), 4) if all_sils else None,
+            "silhouette_overall_std": round(float(np.std(all_sils)), 4) if all_sils else None,
+            "silhouette_overall_min": round(float(np.min(all_sils)), 4) if all_sils else None,
+            "silhouette_overall_max": round(float(np.max(all_sils)), 4) if all_sils else None,
+            "silhouette_by_level": {
+                str(lvl): {
+                    "count": len(sils),
+                    "mean": round(float(np.mean(sils)), 4),
+                    "median": round(float(np.median(sils)), 4),
+                    "std": round(float(np.std(sils)), 4) if len(sils) > 1 else 0.0,
+                    "min": round(float(np.min(sils)), 4),
+                    "max": round(float(np.max(sils)), 4),
+                }
+                for lvl, sils in sorted(split_sils_by_level.items())
+            },
+            "split_records": split_records,
+        }
+
     def _silhouette(X, labels, *, sample_size, seed_for_sample, weights=None) -> float:
         """(Weighted) mean silhouette of a split; NaN if undefined.
 
