@@ -163,6 +163,7 @@ def main(cfg: DictConfig) -> None:
 
     # ---- code-token vocabulary: <c{level}_{k}> for level < m, k < base ----
     BASE = int(cfg.tokenization.base)
+    M = int(cfg.tokenization.m)
     is_ragged = bool(getattr(cfg.tokenization, "adaptive_depth", False))
     if is_ragged:
         max_depth = int(getattr(cfg.tokenization, "max_depth", 6))
@@ -170,7 +171,7 @@ def main(cfg: DictConfig) -> None:
         eff_M = None
         max_new_tokens = TOTAL_LEVELS
     else:
-        M = int(cfg.tokenization.m)
+        max_depth = M - 1
         TOTAL_LEVELS = M
         eff_M = M
         max_new_tokens = M
@@ -348,7 +349,8 @@ def main(cfg: DictConfig) -> None:
             {
                 "category": category,
                 "variant": str(cfg.tokenization.variant),
-                "m": M,
+                "m": "ragged" if is_ragged else M,
+                "max_depth": max_depth if is_ragged else M - 1,
                 "base": BASE,
                 "min_share_prob": cfg.tokenization.min_share_prob,
                 "use_item_mass": bool(cfg.tokenization.use_item_mass),
