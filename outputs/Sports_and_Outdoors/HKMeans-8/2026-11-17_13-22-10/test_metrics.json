@@ -1,0 +1,22 @@
+{
+  "category": "Sports_and_Outdoors",
+  "variant": "HKMeans-8",
+  "m": 5,
+  "base": 4096,
+  "min_share_prob": null,
+  "use_item_mass": false,
+  "test_loss": 1.8559696674346924,
+  "test_recall@5": 0.028175740210124166,
+  "test_recall@10": 0.0430642170908478,
+  "test_ndcg@5": 0.01856840372842315,
+  "test_ndcg@10": 0.023374569849190865,
+  "test_runtime": 97.8742,
+  "test_samples_per_second": 363.712,
+  "test_steps_per_second": 1.43,
+  "epoch": 300.0,
+  "val_recall@5": 0.039187594808697115,
+  "val_recall@10": 0.05845834035619979,
+  "val_ndcg@5": 0.026353315477957998,
+  "val_ndcg@10": 0.03256288574397568,
+  "best_epoch": 250.0
+}

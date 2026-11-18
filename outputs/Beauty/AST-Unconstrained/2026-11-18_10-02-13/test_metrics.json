@@ -1,0 +1,22 @@
+{
+  "category": "Beauty",
+  "variant": "AST-Unconstrained",
+  "m": 4,
+  "base": 4096,
+  "min_share_prob": null,
+  "use_item_mass": false,
+  "test_loss": 2.121748208999634,
+  "test_recall@5": 0.05003800921164423,
+  "test_recall@10": 0.07472163842060546,
+  "test_ndcg@5": 0.03284328994396425,
+  "test_ndcg@10": 0.040737366423653554,
+  "test_runtime": 55.3757,
+  "test_samples_per_second": 403.841,
+  "test_steps_per_second": 1.589,
+  "epoch": 150.0,
+  "val_recall@5": 0.06470509323436033,
+  "val_recall@10": 0.09538076286723605,
+  "val_ndcg@5": 0.04446665033411415,
+  "val_ndcg@10": 0.05434989582939552,
+  "best_epoch": 100.0
+}
