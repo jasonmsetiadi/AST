@@ -1,0 +1,23 @@
+{
+  "category": "Sports_and_Outdoors",
+  "variant": "HKMeans-24-m4",
+  "m": 4,
+  "max_depth": 3,
+  "base": 4096,
+  "min_share_prob": null,
+  "use_item_mass": false,
+  "test_loss": 2.2795283794403076,
+  "test_recall@5": 0.029748862295634587,
+  "test_recall@10": 0.04491825383448508,
+  "test_ndcg@5": 0.01951877058658918,
+  "test_ndcg@10": 0.024390783524142194,
+  "test_runtime": 81.3278,
+  "test_samples_per_second": 437.71,
+  "test_steps_per_second": 1.721,
+  "epoch": 260.0,
+  "val_recall@5": 0.040283161975391876,
+  "val_recall@10": 0.05918871846732963,
+  "val_ndcg@5": 0.026700450971868395,
+  "val_ndcg@10": 0.032799587988281656,
+  "best_epoch": 210.0
+}

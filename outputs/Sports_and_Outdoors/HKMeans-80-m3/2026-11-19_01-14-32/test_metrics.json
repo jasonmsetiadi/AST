@@ -1,0 +1,23 @@
+{
+  "category": "Sports_and_Outdoors",
+  "variant": "HKMeans-80-m3",
+  "m": 3,
+  "max_depth": 2,
+  "base": 4096,
+  "min_share_prob": null,
+  "use_item_mass": false,
+  "test_loss": 3.0267364978790283,
+  "test_recall@5": 0.029383673240069668,
+  "test_recall@10": 0.04401932692847913,
+  "test_ndcg@5": 0.01934683875481498,
+  "test_ndcg@10": 0.02406411014455145,
+  "test_runtime": 67.5215,
+  "test_samples_per_second": 527.21,
+  "test_steps_per_second": 2.073,
+  "epoch": 250.0,
+  "val_recall@5": 0.04014270464632844,
+  "val_recall@10": 0.05851452328782516,
+  "val_ndcg@5": 0.026431209663163577,
+  "val_ndcg@10": 0.03237520074586594,
+  "best_epoch": 200.0
+}
