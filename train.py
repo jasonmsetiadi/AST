@@ -110,7 +110,7 @@ def build_semantic_ids(cfg: DictConfig, id2text, tokenizer, item_probs, item_emb
         k_cap=int(getattr(t, "k_cap", 64)),
         min_items_to_split=int(getattr(t, "min_items_to_split", 3)),
         adaptive_depth=bool(getattr(t, "adaptive_depth", False)),
-        max_depth=int(getattr(t, "max_depth", 6)),
+        max_depth=int(getattr(t, "max_depth", int(t.m) - 1 if bool(getattr(t, "adaptive_depth", False)) else 6)),
         max_items_per_leaf=int(getattr(t, "max_items_per_leaf", 4)),
         capacity_aware_min_k=bool(t.capacity_aware_min_k),
         stop_recursion_if_no_split=bool(t.stop_recursion_if_no_split),
@@ -166,10 +166,14 @@ def main(cfg: DictConfig) -> None:
     M = int(cfg.tokenization.m)
     is_ragged = bool(getattr(cfg.tokenization, "adaptive_depth", False))
     if is_ragged:
-        max_depth = int(getattr(cfg.tokenization, "max_depth", 6))
+        user_max_depth = getattr(cfg.tokenization, "max_depth", None)
+        if user_max_depth is not None:
+            max_depth = int(user_max_depth)
+        else:
+            max_depth = M - 1
         TOTAL_LEVELS = max_depth + 1
         eff_M = None
-        max_new_tokens = TOTAL_LEVELS
+        max_new_tokens = TOTAL_LEVELS + 1
     else:
         max_depth = M - 1
         TOTAL_LEVELS = M

@@ -743,10 +743,23 @@ def build_item2tokseq_ids_silhouette_tree(
                 return
 
             X = embs[item_ids]
-            K_max = min(int(base), n - 1)
-            K, labels, diag = _pick_best_k(
-                X, item_ids, K_min=2, K_max=K_max, seed_local=int(node_seed)
-            )
+            if fixed_k is not None:
+                K = min(int(fixed_k), n - 1)
+                if K < 2:
+                    depth_hist[level] += 1
+                    leaf_sizes_list.append(n)
+                    for j, item_id in enumerate(sorted(item_ids.tolist())):
+                        ragged_item2tokseq_ids[item_id] = list(current_prefix) + [tok_ids[suffix_lvl][j]]
+                    return
+                labels = _regular_kmeans_labels(
+                    X, K, seed=int(node_seed), max_iter=max_iter_kmeans, n_init=n_init_kmeans
+                )
+                diag = _split_stats(item_ids, labels)
+            else:
+                K_max = min(int(base), n - 1)
+                K, labels, diag = _pick_best_k(
+                    X, item_ids, K_min=2, K_max=K_max, seed_local=int(node_seed)
+                )
 
             if K <= 1 or labels is None or diag is None:
                 depth_hist[level] += 1
