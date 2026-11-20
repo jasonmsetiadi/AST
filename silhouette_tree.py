@@ -24,7 +24,15 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_samples
 
 
-def _regular_kmeans_labels(X: np.ndarray, K: int, *, seed: int, max_iter: int, n_init: int) -> np.ndarray:
+def _regular_kmeans_labels(
+    X: np.ndarray,
+    K: int,
+    *,
+    seed: int,
+    max_iter: int,
+    n_init: int,
+    sample_weight: np.ndarray | None = None,
+) -> np.ndarray:
     km = KMeans(
         n_clusters=int(K),
         random_state=int(seed),
@@ -32,7 +40,7 @@ def _regular_kmeans_labels(X: np.ndarray, K: int, *, seed: int, max_iter: int, n
         n_init=int(n_init),
         init="k-means++",
     )
-    return km.fit_predict(X).astype(np.int32)
+    return km.fit_predict(X, sample_weight=sample_weight).astype(np.int32)
 
 
 def _token_ids(tokenizer, flat_tokens: list[str]) -> list[int]:
@@ -653,13 +661,19 @@ def build_item2tokseq_ids_silhouette_tree(
             if K_target < max(2, min_k_eff):
                 leaf_counts[level] += 1
                 return
+            sample_weight = None
+            if p_items is not None:
+                p_local = p_items[item_ids]
+                s = float(p_local.sum())
+                if s > 0:
+                    sample_weight = (p_local / s) + (1.0 / n)
             labels_raw = _regular_kmeans_labels(
-                X, int(K_target), seed=int(node_seed), max_iter=max_iter_kmeans, n_init=n_init_kmeans
+                X, int(K_target), seed=int(node_seed), max_iter=max_iter_kmeans, n_init=n_init_kmeans, sample_weight=sample_weight
             )
             diag = _split_stats(item_ids, labels_raw)
             K = int(diag["K_eff"])
             labels = np.asarray(diag["labels"], dtype=np.int32)
-            diag["assign_method"] = "kmeans"
+            diag["assign_method"] = "weighted_kmeans" if sample_weight is not None else "kmeans"
             sil_calc = _silhouette(
                 X, labels, sample_size=silhouette_sample_size, seed_for_sample=int(node_seed) + 99991
             )
@@ -765,8 +779,14 @@ def build_item2tokseq_ids_silhouette_tree(
                     for j, item_id in enumerate(sorted(item_ids.tolist())):
                         ragged_item2tokseq_ids[item_id] = list(current_prefix) + [tok_ids[suffix_lvl][j]]
                     return
+                sample_weight = None
+                if p_items is not None:
+                    p_local = p_items[item_ids]
+                    s = float(p_local.sum())
+                    if s > 0:
+                        sample_weight = (p_local / s) + (1.0 / n)
                 labels = _regular_kmeans_labels(
-                    X, K, seed=int(node_seed), max_iter=max_iter_kmeans, n_init=n_init_kmeans
+                    X, K, seed=int(node_seed), max_iter=max_iter_kmeans, n_init=n_init_kmeans, sample_weight=sample_weight
                 )
                 diag = _split_stats(item_ids, labels)
             else:
