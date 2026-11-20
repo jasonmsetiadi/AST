@@ -40,6 +40,7 @@ from utils import (
     build_contiguous_wordlevel_tokenizer,
     build_id2text_from_item2token,
     compute_item_probs_from_dd_train,
+    compute_leaf_popularity_stats,
     make_seq2seq_tokenize_fn,
     normalize_item2token,
     print_model_parameters,
@@ -236,7 +237,18 @@ def main(cfg: DictConfig) -> None:
             "leaf_sizes": leaf_counts,
         }
         stats.update(tree_stats)
-        summary = {k: v for k, v in stats.items() if k not in ("leaf_sizes", "split_records")}
+        if item_probs is not None:
+            pop_stats = compute_leaf_popularity_stats(item2tokseq_ids, item_probs)
+            stats["popularity_composition"] = pop_stats
+            with open(out_dir / "item_probs.pkl", "wb") as pf:
+                pickle.dump(item_probs, pf, protocol=pickle.HIGHEST_PROTOCOL)
+            print(
+                f"[AST PopStats] Mixed Head-Tail Leaves: {pop_stats['leaf_cluster_breakdown']['pct_leaves_mixed_head_tail']}% | "
+                f"Tail with Head: {pop_stats['tail_item_experience']['pct_tail_items_sharing_with_head']}% | "
+                f"Tail Isolated: {pop_stats['tail_item_experience']['pct_tail_items_isolated_in_pure_tail']}%"
+            )
+
+        summary = {k: v for k, v in stats.items() if k not in ("leaf_sizes", "split_records", "popularity_composition")}
         print(f"[AST] {summary}")
         with open(out_dir / "sids_stats.json", "w") as f:
             json.dump(stats, f, indent=2)

@@ -97,6 +97,150 @@ def compute_item_probs_from_dd_train(dd: DatasetDict, *, include_history: bool =
     return item_counts.astype(np.float64) / total, item_counts, total
 
 
+def compute_leaf_popularity_stats(
+    item2tokseq_ids: Dict[int, List[int]],
+    item_probs: np.ndarray,
+    head_pct: float = 0.20,
+    tail_pct: float = 0.20,
+) -> dict:
+    """
+    Analyze leaf cluster composition w.r.t. item interaction frequency:
+    - Head: top `head_pct` (e.g. 20%) most interacted items in training split
+    - Tail: bottom `tail_pct` (e.g. 20%) least interacted items
+    - Body: middle items
+    
+    Computes:
+    - Pure Head, Pure Body, Pure Tail leaves
+    - Mixed Head-Tail leaves (tail items piggybacking on head prefixes)
+    - Tail protection / isolation rates
+    """
+    items = sorted(item2tokseq_ids.keys())
+    N = len(items)
+    if N == 0:
+        return {}
+
+    # Extract interaction mass for each item
+    item_masses = []
+    for it in items:
+        m = float(item_probs[it]) if it < len(item_probs) else 0.0
+        item_masses.append((it, m))
+
+    # Sort items by interaction frequency descending (tie-breaking by item id)
+    sorted_by_mass = sorted(item_masses, key=lambda x: (x[1], -x[0]), reverse=True)
+
+    n_head = max(1, int(round(N * head_pct)))
+    n_tail = max(1, int(round(N * tail_pct)))
+
+    head_set = {x[0] for x in sorted_by_mass[:n_head]}
+    tail_set = {x[0] for x in sorted_by_mass[-n_tail:]}
+    tail_set = tail_set - head_set
+    body_set = set(items) - head_set - tail_set
+
+    # Group items by leaf prefix
+    prefix2items: Dict[tuple, List[int]] = {}
+    item2prefix = {}
+    for it, seq in item2tokseq_ids.items():
+        prefix = tuple(seq[:-1])
+        prefix2items.setdefault(prefix, []).append(it)
+        item2prefix[it] = prefix
+
+    total_leaves = len(prefix2items)
+    pure_head_leaves = 0
+    pure_body_leaves = 0
+    pure_tail_leaves = 0
+    mixed_head_tail_leaves = 0
+    mixed_any_leaves = 0
+
+    leaf_type = {}
+    for pfx, cluster_items in prefix2items.items():
+        h_cnt = sum(1 for x in cluster_items if x in head_set)
+        b_cnt = sum(1 for x in cluster_items if x in body_set)
+        t_cnt = sum(1 for x in cluster_items if x in tail_set)
+
+        is_pure_h = (h_cnt > 0 and b_cnt == 0 and t_cnt == 0)
+        is_pure_b = (b_cnt > 0 and h_cnt == 0 and t_cnt == 0)
+        is_pure_t = (t_cnt > 0 and h_cnt == 0 and b_cnt == 0)
+        is_mixed_ht = (h_cnt > 0 and t_cnt > 0)
+        is_mixed_any = (int(h_cnt > 0) + int(b_cnt > 0) + int(t_cnt > 0)) > 1
+
+        if is_pure_h: pure_head_leaves += 1
+        if is_pure_b: pure_body_leaves += 1
+        if is_pure_t: pure_tail_leaves += 1
+        if is_mixed_ht: mixed_head_tail_leaves += 1
+        if is_mixed_any: mixed_any_leaves += 1
+
+        leaf_type[pfx] = {
+            "h_cnt": h_cnt,
+            "b_cnt": b_cnt,
+            "t_cnt": t_cnt,
+            "has_head": h_cnt > 0,
+            "has_body": b_cnt > 0,
+            "is_pure_tail": is_pure_t,
+        }
+
+    # Tail item experience
+    tail_with_head = 0
+    tail_with_body_only = 0
+    tail_isolated = 0
+    for t_it in tail_set:
+        pfx = item2prefix[t_it]
+        info = leaf_type[pfx]
+        if info["has_head"]:
+            tail_with_head += 1
+        elif info["has_body"]:
+            tail_with_body_only += 1
+        else:
+            tail_isolated += 1
+
+    # Head item experience
+    head_with_tail = 0
+    head_isolated = 0
+    for h_it in head_set:
+        pfx = item2prefix[h_it]
+        info = leaf_type[pfx]
+        if info["t_cnt"] > 0:
+            head_with_tail += 1
+        elif info["b_cnt"] == 0:
+            head_isolated += 1
+
+    n_tail_total = max(1, len(tail_set))
+    n_head_total = max(1, len(head_set))
+
+    return {
+        "thresholds": {"head_top_pct": head_pct, "tail_bottom_pct": tail_pct},
+        "item_counts": {
+            "total_items": N,
+            "head_items": len(head_set),
+            "body_items": len(body_set),
+            "tail_items": len(tail_set),
+        },
+        "leaf_cluster_breakdown": {
+            "total_leaves": total_leaves,
+            "pure_head_leaves": pure_head_leaves,
+            "pure_body_leaves": pure_body_leaves,
+            "pure_tail_leaves": pure_tail_leaves,
+            "mixed_head_tail_leaves": mixed_head_tail_leaves,
+            "mixed_any_leaves": mixed_any_leaves,
+            "pct_leaves_mixed_head_tail": round(100.0 * mixed_head_tail_leaves / total_leaves, 2) if total_leaves else 0.0,
+            "pct_leaves_pure_tail": round(100.0 * pure_tail_leaves / total_leaves, 2) if total_leaves else 0.0,
+        },
+        "tail_item_experience": {
+            "tail_items_sharing_with_head": tail_with_head,
+            "pct_tail_items_sharing_with_head": round(100.0 * tail_with_head / n_tail_total, 2),
+            "tail_items_sharing_with_body_only": tail_with_body_only,
+            "pct_tail_items_sharing_with_body_only": round(100.0 * tail_with_body_only / n_tail_total, 2),
+            "tail_items_isolated_in_pure_tail": tail_isolated,
+            "pct_tail_items_isolated_in_pure_tail": round(100.0 * tail_isolated / n_tail_total, 2),
+        },
+        "head_item_experience": {
+            "head_items_sharing_with_tail": head_with_tail,
+            "pct_head_items_sharing_with_tail": round(100.0 * head_with_tail / n_head_total, 2),
+            "head_items_isolated_in_pure_head": head_isolated,
+            "pct_head_items_isolated_in_pure_head": round(100.0 * head_isolated / n_head_total, 2),
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Code-token vocabulary and seq2seq examples
 # ---------------------------------------------------------------------------
