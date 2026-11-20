@@ -1,0 +1,23 @@
+{
+  "category": "Sports_and_Outdoors",
+  "variant": "HKMeans-18-Weighted-m4",
+  "m": 4,
+  "max_depth": 3,
+  "base": 4096,
+  "min_share_prob": null,
+  "use_item_mass": true,
+  "test_loss": 2.2257728576660156,
+  "test_recall@5": 0.03151862464183381,
+  "test_recall@10": 0.045114894095173885,
+  "test_ndcg@5": 0.020586274505805763,
+  "test_ndcg@10": 0.02496059400850103,
+  "test_runtime": 78.8764,
+  "test_samples_per_second": 451.314,
+  "test_steps_per_second": 1.775,
+  "epoch": 200.0,
+  "val_recall@5": 0.040957357154896346,
+  "val_recall@10": 0.0582336086296983,
+  "val_ndcg@5": 0.02757592644727612,
+  "val_ndcg@10": 0.033155066762368006,
+  "best_epoch": 150.0
+}

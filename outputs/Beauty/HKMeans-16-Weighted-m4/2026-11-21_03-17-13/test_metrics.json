@@ -1,0 +1,23 @@
+{
+  "category": "Beauty",
+  "variant": "HKMeans-16-Weighted-m4",
+  "m": 4,
+  "max_depth": 3,
+  "base": 4096,
+  "min_share_prob": null,
+  "use_item_mass": true,
+  "test_loss": 2.221147060394287,
+  "test_recall@5": 0.048338773867549076,
+  "test_recall@10": 0.06993694942539015,
+  "test_ndcg@5": 0.032597254639480856,
+  "test_ndcg@10": 0.03955728884383608,
+  "test_runtime": 52.4337,
+  "test_samples_per_second": 426.5,
+  "test_steps_per_second": 1.678,
+  "epoch": 260.0,
+  "val_recall@5": 0.06443679291687161,
+  "val_recall@10": 0.09086437418950946,
+  "val_ndcg@5": 0.044710604168991926,
+  "val_ndcg@10": 0.05321057171702289,
+  "best_epoch": 210.0
+}
