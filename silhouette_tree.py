@@ -210,7 +210,7 @@ def build_item2tokseq_ids_silhouette_tree(
     weighted_silhouette: bool = True,          # mass-weighted silhouette; needs item_probs
 
     # tree behaviour
-    fixed_k: int | None = None,
+    fixed_k: int | list[int] | str | None = None,
     density_driven_k: bool = False,
     target_items_per_leaf: float = 3.0,
     k_window_delta: int = 2,
@@ -318,6 +318,18 @@ def build_item2tokseq_ids_silhouette_tree(
     # ------------------------------------------------------------------
     # 3) prefix codes, built top-down
     # ------------------------------------------------------------------
+    k_schedule: list[int] | None = None
+    if fixed_k is not None:
+        if isinstance(fixed_k, (list, tuple)):
+            k_schedule = [int(x) for x in fixed_k]
+        elif isinstance(fixed_k, str) and ("," in fixed_k or "-" in fixed_k):
+            sep = "," if "," in fixed_k else "-"
+            k_schedule = [int(x.strip()) for x in fixed_k.split(sep)]
+        else:
+            k_schedule = [int(fixed_k)] * max(L, int(max_depth) if adaptive_depth else L)
+        if print_stats:
+            print(f"[AST] Using layer-wise branching schedule: {k_schedule}")
+
     codes = [np.zeros(N, dtype=np.int32) for _ in range(L)]
     split_counts = np.zeros(L, dtype=np.int64)
     chosen_k_hist = [defaultdict(int) for _ in range(L)]
@@ -634,8 +646,9 @@ def build_item2tokseq_ids_silhouette_tree(
             return
 
         X = embs[item_ids]
-        if fixed_k is not None:
-            K_target = min(int(fixed_k), n - 1)
+        if k_schedule is not None:
+            K_level = k_schedule[level] if level < len(k_schedule) else k_schedule[-1]
+            K_target = min(int(K_level), n - 1)
             min_k_eff = _capacity_lower_bound_k(n, level)
             if K_target < max(2, min_k_eff):
                 leaf_counts[level] += 1
@@ -743,8 +756,9 @@ def build_item2tokseq_ids_silhouette_tree(
                 return
 
             X = embs[item_ids]
-            if fixed_k is not None:
-                K = min(int(fixed_k), n - 1)
+            if k_schedule is not None:
+                K_level = k_schedule[level] if level < len(k_schedule) else k_schedule[-1]
+                K = min(int(K_level), n - 1)
                 if K < 2:
                     depth_hist[level] += 1
                     leaf_sizes_list.append(n)

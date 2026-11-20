@@ -103,7 +103,11 @@ def build_semantic_ids(cfg: DictConfig, id2text, tokenizer, item_probs, item_emb
         k_search_step=int(t.k_search_step),
         weighted_silhouette=bool(t.weighted_silhouette),
         # tree
-        fixed_k=None if getattr(t, "fixed_k", None) is None else int(t.fixed_k),
+        fixed_k=(
+            None
+            if getattr(t, "fixed_k", None) is None
+            else (str(t.fixed_k) if any(sep in str(t.fixed_k) for sep in (",", "-")) else int(t.fixed_k))
+        ),
         density_driven_k=bool(getattr(t, "density_driven_k", False)),
         target_items_per_leaf=float(getattr(t, "target_items_per_leaf", 3.0)),
         k_window_delta=int(getattr(t, "k_window_delta", 2)),
