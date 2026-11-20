@@ -331,8 +331,9 @@ def build_item2tokseq_ids_silhouette_tree(
         if isinstance(fixed_k, (list, tuple)):
             k_schedule = [int(x) for x in fixed_k]
         elif isinstance(fixed_k, str) and ("," in fixed_k or "-" in fixed_k):
-            sep = "," if "," in fixed_k else "-"
-            k_schedule = [int(x.strip()) for x in fixed_k.split(sep)]
+            clean = fixed_k.strip("[]'\"")
+            sep = "," if "," in clean else "-"
+            k_schedule = [int(x.strip()) for x in clean.split(sep) if x.strip()]
         else:
             k_schedule = [int(fixed_k)] * max(L, int(max_depth) if adaptive_depth else L)
         if print_stats:

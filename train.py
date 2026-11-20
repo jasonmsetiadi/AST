@@ -22,7 +22,7 @@ import hydra
 import numpy as np
 from hydra.core.hydra_config import HydraConfig
 from hydra.utils import get_original_cwd
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, ListConfig, OmegaConf
 from transformers import DataCollatorForSeq2Seq, EarlyStoppingCallback, Seq2SeqTrainingArguments, TrainerCallback
 
 from data import build_amazon2014_seq_splits, build_asin2text, load_amazon2014_meta, print_split_stats
@@ -107,6 +107,7 @@ def build_semantic_ids(cfg: DictConfig, id2text, tokenizer, item_probs, item_emb
         fixed_k=(
             None
             if getattr(t, "fixed_k", None) is None
+            else list(t.fixed_k) if isinstance(t.fixed_k, (list, tuple, ListConfig))
             else (str(t.fixed_k) if any(sep in str(t.fixed_k) for sep in (",", "-")) else int(t.fixed_k))
         ),
         density_driven_k=bool(getattr(t, "density_driven_k", False)),
