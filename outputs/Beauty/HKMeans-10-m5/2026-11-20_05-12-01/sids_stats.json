@@ -11767,5 +11767,41 @@
       "K": 10,
       "silhouette": 0.16032
     }
-  ]
+  ],
+  "popularity_composition": {
+    "thresholds": {
+      "head_top_pct": 0.2,
+      "tail_bottom_pct": 0.2
+    },
+    "item_counts": {
+      "total_items": 12104,
+      "head_items": 2421,
+      "body_items": 7262,
+      "tail_items": 2421
+    },
+    "leaf_cluster_breakdown": {
+      "total_leaves": 6227,
+      "pure_head_leaves": 790,
+      "pure_body_leaves": 2998,
+      "pure_tail_leaves": 831,
+      "mixed_head_tail_leaves": 505,
+      "mixed_any_leaves": 1608,
+      "pct_leaves_mixed_head_tail": 8.11,
+      "pct_leaves_pure_tail": 13.35
+    },
+    "tail_item_experience": {
+      "tail_items_sharing_with_head": 829,
+      "pct_tail_items_sharing_with_head": 34.24,
+      "tail_items_sharing_with_body_only": 694,
+      "pct_tail_items_sharing_with_body_only": 28.67,
+      "tail_items_isolated_in_pure_tail": 898,
+      "pct_tail_items_isolated_in_pure_tail": 37.09
+    },
+    "head_item_experience": {
+      "head_items_sharing_with_tail": 885,
+      "pct_head_items_sharing_with_tail": 36.56,
+      "head_items_isolated_in_pure_head": 850,
+      "pct_head_items_isolated_in_pure_head": 35.11
+    }
+  }
 }

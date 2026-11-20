@@ -4,11 +4,9 @@ __pycache__/
 
 # data, caches and run outputs
 raw_data/
-outputs/
 multirun/
 runs/
 wandb/
 checkpoint-*/
-*.pkl
 *.npy
 .hydra/

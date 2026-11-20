@@ -5,5 +5,41 @@
   "prefixes_len2": 67,
   "prefixes_len3": 463,
   "prefixes_len4": 2012,
-  "build_seconds": 3016.4
+  "build_seconds": 3016.4,
+  "popularity_composition": {
+    "thresholds": {
+      "head_top_pct": 0.2,
+      "tail_bottom_pct": 0.2
+    },
+    "item_counts": {
+      "total_items": 18360,
+      "head_items": 3672,
+      "body_items": 11016,
+      "tail_items": 3672
+    },
+    "leaf_cluster_breakdown": {
+      "total_leaves": 2012,
+      "pure_head_leaves": 131,
+      "pure_body_leaves": 492,
+      "pure_tail_leaves": 87,
+      "mixed_head_tail_leaves": 723,
+      "mixed_any_leaves": 1302,
+      "pct_leaves_mixed_head_tail": 35.93,
+      "pct_leaves_pure_tail": 4.32
+    },
+    "tail_item_experience": {
+      "tail_items_sharing_with_head": 3143,
+      "pct_tail_items_sharing_with_head": 85.59,
+      "tail_items_sharing_with_body_only": 413,
+      "pct_tail_items_sharing_with_body_only": 11.25,
+      "tail_items_isolated_in_pure_tail": 116,
+      "pct_tail_items_isolated_in_pure_tail": 3.16
+    },
+    "head_item_experience": {
+      "head_items_sharing_with_tail": 3048,
+      "pct_head_items_sharing_with_tail": 83.01,
+      "head_items_isolated_in_pure_head": 170,
+      "pct_head_items_isolated_in_pure_head": 4.63
+    }
+  }
 }
