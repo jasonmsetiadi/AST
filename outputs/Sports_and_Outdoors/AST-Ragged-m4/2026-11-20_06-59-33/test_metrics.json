@@ -1,0 +1,23 @@
+{
+  "category": "Sports_and_Outdoors",
+  "variant": "AST-Ragged-m4",
+  "m": "ragged",
+  "max_depth": 3,
+  "base": 4096,
+  "min_share_prob": null,
+  "use_item_mass": false,
+  "test_loss": 1.7990682125091553,
+  "test_recall@5": 0.029496039103320413,
+  "test_recall@10": 0.04542390021911343,
+  "test_ndcg@5": 0.01925423033016044,
+  "test_ndcg@10": 0.02441060900398356,
+  "test_runtime": 105.5163,
+  "test_samples_per_second": 337.37,
+  "test_steps_per_second": 1.327,
+  "epoch": 180.0,
+  "val_recall@5": 0.038710039889881455,
+  "val_recall@10": 0.05848643182201247,
+  "val_ndcg@5": 0.025781634673908656,
+  "val_ndcg@10": 0.03212346586823053,
+  "best_epoch": 130.0
+}

@@ -1,0 +1,23 @@
+{
+  "category": "Beauty",
+  "variant": "HKMeans-Ragged-16-m4",
+  "m": "ragged",
+  "max_depth": 3,
+  "base": 4096,
+  "min_share_prob": null,
+  "use_item_mass": false,
+  "test_loss": 1.8109397888183594,
+  "test_recall@5": 0.047041988999686986,
+  "test_recall@10": 0.06953449894915709,
+  "test_ndcg@5": 0.032080117821330995,
+  "test_ndcg@10": 0.0393204800522325,
+  "test_runtime": 58.4764,
+  "test_samples_per_second": 382.428,
+  "test_steps_per_second": 1.505,
+  "epoch": 260.0,
+  "val_recall@5": 0.06729866297008451,
+  "val_recall@10": 0.093592094083978,
+  "val_ndcg@5": 0.046012276319899736,
+  "val_ndcg@10": 0.05450822410885371,
+  "best_epoch": 210.0
+}

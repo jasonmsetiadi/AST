@@ -1,0 +1,23 @@
+{
+  "category": "Sports_and_Outdoors",
+  "variant": "AST-Unconstrained-m3",
+  "m": 3,
+  "max_depth": 2,
+  "base": 4096,
+  "min_share_prob": null,
+  "use_item_mass": false,
+  "test_loss": 3.0495588779449463,
+  "test_recall@5": 0.027445362098994324,
+  "test_recall@10": 0.04340131468060003,
+  "test_ndcg@5": 0.018149831802713956,
+  "test_ndcg@10": 0.023273456254871,
+  "test_runtime": 92.8913,
+  "test_samples_per_second": 383.222,
+  "test_steps_per_second": 1.507,
+  "epoch": 150.0,
+  "val_recall@5": 0.03769874712062475,
+  "val_recall@10": 0.05643575481768639,
+  "val_ndcg@5": 0.024774173613295994,
+  "val_ndcg@10": 0.030763838632610258,
+  "best_epoch": 100.0
+}

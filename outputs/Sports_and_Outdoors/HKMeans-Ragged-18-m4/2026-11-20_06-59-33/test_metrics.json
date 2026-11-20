@@ -1,0 +1,23 @@
+{
+  "category": "Sports_and_Outdoors",
+  "variant": "HKMeans-Ragged-18-m4",
+  "m": "ragged",
+  "max_depth": 3,
+  "base": 4096,
+  "min_share_prob": null,
+  "use_item_mass": false,
+  "test_loss": 1.7790426015853882,
+  "test_recall@5": 0.02977695376144727,
+  "test_recall@10": 0.044244058654980614,
+  "test_ndcg@5": 0.01929211100491524,
+  "test_ndcg@10": 0.023936314818894328,
+  "test_runtime": 101.4753,
+  "test_samples_per_second": 350.805,
+  "test_steps_per_second": 1.38,
+  "epoch": 190.0,
+  "val_recall@5": 0.03927186920613518,
+  "val_recall@10": 0.05775605371088263,
+  "val_ndcg@5": 0.026093655911186744,
+  "val_ndcg@10": 0.03202779252640675,
+  "best_epoch": 140.0
+}
