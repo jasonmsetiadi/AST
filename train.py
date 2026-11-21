@@ -17,6 +17,7 @@ import pickle
 import time
 from collections import Counter
 from pathlib import Path
+from typing import Optional
 
 import hydra
 import numpy as np
@@ -199,6 +200,16 @@ def main(cfg: DictConfig) -> None:
         with open(Path(get_original_cwd()) / str(sids_path), "rb") as f:
             item2tokseq_ids = pickle.load(f)
         print(f"[AST] loaded semantic IDs from {sids_path}")
+        # Try to load item_probs saved alongside the original sids
+        _probs_path = (Path(get_original_cwd()) / str(sids_path)).parent / "item_probs.pkl"
+        if _probs_path.exists():
+            with open(_probs_path, "rb") as pf:
+                item_probs = pickle.load(pf)
+            print(f"[AST] loaded item_probs from {_probs_path}")
+        else:
+            item_probs, _, _ = compute_item_probs_from_dd_train(dd)
+            if len(item_probs) < len(id2text):
+                item_probs = np.pad(item_probs, (0, len(id2text) - len(item_probs)))
     else:
         item_embs = load_or_encode_items(cfg, id2text, data_root)
         if cfg.stop_after == "embed":
@@ -257,6 +268,31 @@ def main(cfg: DictConfig) -> None:
             return
 
     # ---- seq2seq examples ----
+    # Compute item_tiers (head/body/tail by interaction frequency) for grouped eval metrics
+    item_tiers: Optional[dict] = None
+    if item_probs is not None:
+        _items = sorted(item2tokseq_ids.keys())
+        _N = len(_items)
+        if _N > 0:
+            _n_head = max(1, int(round(_N * 0.20)))
+            _n_tail = max(1, int(round(_N * 0.20)))
+            _masses = sorted(
+                [(it, float(item_probs[it]) if it < len(item_probs) else 0.0) for it in _items],
+                key=lambda x: (x[1], -x[0]),
+                reverse=True,
+            )
+            _head_set = {x[0] for x in _masses[:_n_head]}
+            _tail_set  = {x[0] for x in _masses[-_n_tail:]} - _head_set
+            item_tiers = {}
+            for it in _items:
+                if it in _head_set:
+                    item_tiers[it] = "head"
+                elif it in _tail_set:
+                    item_tiers[it] = "tail"
+                else:
+                    item_tiers[it] = "body"
+            print(f"[AST] item_tiers: head={len(_head_set)} body={_N - len(_head_set) - len(_tail_set)} tail={len(_tail_set)}")
+
     tokenize_fn = make_seq2seq_tokenize_fn(item2tokseq_ids=item2tokseq_ids, M=eff_M, eos_id=eos_id if is_ragged else None)
     tokenized = {
         split: dd[split].map(tokenize_fn, remove_columns=list(cfg.data.remove_cols))
@@ -336,6 +372,7 @@ def main(cfg: DictConfig) -> None:
             M=eff_M,
             eos_id=eos_id if is_ragged else None,
             k_values=(5, 10),
+            item_tiers=item_tiers,
         ),
         callbacks=callbacks,
         prefix_allowed_tokens_fn=prefix_allowed_tokens,
@@ -366,6 +403,9 @@ def main(cfg: DictConfig) -> None:
     if best_eval:
         val_metrics["best_epoch"] = float(best_eval["epoch"])
     with open(out_dir / "test_metrics.json", "w") as f:
+        # Separate int-valued count keys from float-valued metric keys
+        _test_floats = {k: float(v) for k, v in test_metrics.items() if "_count" not in k}
+        _test_counts = {k: int(v) for k, v in test_metrics.items() if "_count" in k}
         json.dump(
             {
                 "category": category,
@@ -375,7 +415,8 @@ def main(cfg: DictConfig) -> None:
                 "base": BASE,
                 "min_share_prob": cfg.tokenization.min_share_prob,
                 "use_item_mass": bool(cfg.tokenization.use_item_mass),
-                **{k: float(v) for k, v in test_metrics.items()},
+                **_test_floats,
+                **_test_counts,
                 **val_metrics,
             },
             f,

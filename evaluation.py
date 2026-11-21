@@ -17,6 +17,7 @@ def build_code_metrics(
     k_values=(5, 10),
     ign_id: int = -100,
     debug: bool = False,
+    item_tiers: Optional[Dict[int, str]] = None,
 ):
     """
     Returns a `compute_metrics` fn for the HF trainer.
@@ -24,6 +25,9 @@ def build_code_metrics(
     Each of the R returned beams is mapped back to its item (codes are unique, which is
     asserted); duplicates are dropped while preserving beam order, then Recall@k and
     NDCG@k are computed against the ground-truth next item.
+
+    If `item_tiers` is provided (mapping item_id -> 'head'|'body'|'tail'), grouped
+    metrics are also returned: head_recall@k, body_recall@k, tail_recall@k, etc.
     """
     code2items: Dict[Tuple[int, ...], List[int]] = defaultdict(list)
     for item, code in item2tokseq_ids.items():
@@ -92,6 +96,8 @@ def build_code_metrics(
 
         recalls = {k: [] for k in k_values}
         ndcgs = {k: [] for k in k_values}
+        tier_recalls: Dict[str, Dict[int, List[float]]] = {t: {k: [] for k in k_values} for t in ("head", "body", "tail")}
+        tier_ndcgs:   Dict[str, Dict[int, List[float]]] = {t: {k: [] for k in k_values} for t in ("head", "body", "tail")}
         for i in range(N):
             gt = gt_items[i]
             cand_items: List[int] = []
@@ -103,16 +109,32 @@ def build_code_metrics(
                 if item is not None and item not in cand_items:
                     cand_items.append(item)
 
+            tier = item_tiers.get(gt) if (item_tiers is not None and gt is not None) else None
             for k in k_values:
                 if gt is None:
                     recalls[k].append(0.0)
                     ndcgs[k].append(0.0)
                 else:
-                    recalls[k].append(1.0 if gt in cand_items[:k] else 0.0)
-                    ndcgs[k].append(_ndcg_at_k(cand_items, gt, k))
+                    r_val = 1.0 if gt in cand_items[:k] else 0.0
+                    n_val = _ndcg_at_k(cand_items, gt, k)
+                    recalls[k].append(r_val)
+                    ndcgs[k].append(n_val)
+                    if tier is not None:
+                        tier_recalls[tier][k].append(r_val)
+                        tier_ndcgs[tier][k].append(n_val)
 
         out = {f"recall@{k}": float(np.mean(recalls[k])) for k in k_values}
         out.update({f"ndcg@{k}": float(np.mean(ndcgs[k])) for k in k_values})
+        # --- per-tier grouped metrics ---
+        if item_tiers is not None:
+            for tier in ("head", "body", "tail"):
+                n_tier = len(tier_recalls[tier][k_values[0]])
+                out[f"{tier}_count"] = n_tier
+                for k in k_values:
+                    vals_r = tier_recalls[tier][k]
+                    vals_n = tier_ndcgs[tier][k]
+                    out[f"{tier}_recall@{k}"] = float(np.mean(vals_r)) if vals_r else 0.0
+                    out[f"{tier}_ndcg@{k}"]   = float(np.mean(vals_n)) if vals_n else 0.0
         if debug:
             print(f"[metrics] N={N} R={R_eff} gt_mapped={sum(g is not None for g in gt_items)}/{N} {out}")
         return out
