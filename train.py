@@ -82,13 +82,48 @@ def load_or_encode_items(cfg: DictConfig, id2text, data_root: Path) -> np.ndarra
     return embs
 
 
-def build_semantic_ids(cfg: DictConfig, id2text, tokenizer, item_probs, item_embs):
+def _build_item_tiers(items, item_probs) -> dict[int, str]:
+    """Split item IDs into top 20%, middle 60%, and bottom 20% by train mass."""
+    items = sorted(int(item) for item in items)
+    n_items = len(items)
+    if n_items == 0:
+        return {}
+    n_head = max(1, int(round(n_items * 0.20)))
+    n_tail = max(1, int(round(n_items * 0.20)))
+    masses = sorted(
+        [(item, float(item_probs[item]) if item < len(item_probs) else 0.0) for item in items],
+        key=lambda pair: (pair[1], -pair[0]),
+        reverse=True,
+    )
+    head = {item for item, _ in masses[:n_head]}
+    tail = {item for item, _ in masses[-n_tail:]} - head
+    return {item: "head" if item in head else "tail" if item in tail else "body" for item in items}
+
+
+def build_semantic_ids(
+    cfg: DictConfig,
+    id2text,
+    tokenizer,
+    item_probs,
+    item_embs,
+    *,
+    m_override: Optional[int] = None,
+    fixed_k_override: Optional[int] = None,
+    adaptive_depth_override: Optional[bool] = None,
+):
     t = cfg.tokenization
+    m_value = int(t.m) if m_override is None else int(m_override)
+    fixed_k_value = fixed_k_override if fixed_k_override is not None else getattr(t, "fixed_k", None)
+    adaptive_depth_value = (
+        bool(getattr(t, "adaptive_depth", False))
+        if adaptive_depth_override is None
+        else bool(adaptive_depth_override)
+    )
     return build_item2tokseq_ids_silhouette_tree(
         id2text=id2text,
         tokenizer=tokenizer,
         base=int(t.base),
-        m=int(t.m),
+        m=m_value,
         seed=int(cfg.seed),
         encoder_name=str(t.encoder_name),
         batch_size=int(t.batch_size),
@@ -107,17 +142,21 @@ def build_semantic_ids(cfg: DictConfig, id2text, tokenizer, item_probs, item_emb
         # tree
         fixed_k=(
             None
-            if getattr(t, "fixed_k", None) is None
-            else list(t.fixed_k) if isinstance(t.fixed_k, (list, tuple, ListConfig))
-            else (str(t.fixed_k) if any(sep in str(t.fixed_k) for sep in (",", "-")) else int(t.fixed_k))
+            if fixed_k_value is None
+            else list(fixed_k_value) if isinstance(fixed_k_value, (list, tuple, ListConfig))
+            else (
+                str(fixed_k_value)
+                if any(sep in str(fixed_k_value) for sep in (",", "-"))
+                else int(fixed_k_value)
+            )
         ),
         density_driven_k=bool(getattr(t, "density_driven_k", False)),
         target_items_per_leaf=float(getattr(t, "target_items_per_leaf", 3.0)),
         k_window_delta=int(getattr(t, "k_window_delta", 2)),
         k_cap=int(getattr(t, "k_cap", 64)),
         min_items_to_split=int(getattr(t, "min_items_to_split", 3)),
-        adaptive_depth=bool(getattr(t, "adaptive_depth", False)),
-        max_depth=int(getattr(t, "max_depth", int(t.m) - 1 if bool(getattr(t, "adaptive_depth", False)) else 6)),
+        adaptive_depth=adaptive_depth_value,
+        max_depth=int(getattr(t, "max_depth", m_value - 1) if adaptive_depth_value else m_value - 1),
         max_items_per_leaf=int(getattr(t, "max_items_per_leaf", 4)),
         capacity_aware_min_k=bool(t.capacity_aware_min_k),
         stop_recursion_if_no_split=bool(t.stop_recursion_if_no_split),
@@ -139,6 +178,69 @@ def build_semantic_ids(cfg: DictConfig, id2text, tokenizer, item_probs, item_emb
         print_stats=bool(t.print_stats),
         return_tree_stats=True,
     )
+
+
+def build_tiered_semantic_ids(cfg, id2text, tokenizer, item_probs, item_embs):
+    """Build independent variable-length HKMeans subtrees for popularity tiers."""
+    t = cfg.tokenization
+    tiers = _build_item_tiers(range(len(id2text)), item_probs)
+    specs = {
+        "head": (int(t.tier_head_m), int(t.tier_head_k)),
+        "body": (int(t.tier_body_m), int(t.tier_body_k)),
+        "tail": (int(t.tier_tail_m), int(t.tier_tail_k)),
+    }
+
+    first_token_offset = 0
+    combined = {}
+    tier_stats = {}
+    for tier in ("head", "body", "tail"):
+        group_ids = np.asarray([item for item, name in tiers.items() if name == tier], dtype=np.int32)
+        group_m, group_k = specs[tier]
+        if first_token_offset + group_k > int(t.base):
+            raise ValueError(
+                f"Tier root-token ranges need {first_token_offset + group_k} tokens, base={int(t.base)}"
+            )
+
+        result = build_semantic_ids(
+            cfg,
+            [id2text[item] for item in group_ids],
+            tokenizer,
+            item_probs[group_ids],
+            item_embs[group_ids],
+            m_override=group_m,
+            fixed_k_override=group_k,
+            adaptive_depth_override=False,
+        )
+        local_codes, local_stats = result if isinstance(result, tuple) else (result, {})
+
+        # Give every tier a disjoint range of first-level tokens. This keeps the
+        # combined variable-length codebook unique without adding a routing level.
+        first_token_map = {
+            tokenizer.convert_tokens_to_ids(f"<c0_{local}>"): tokenizer.convert_tokens_to_ids(
+                f"<c0_{first_token_offset + local}>"
+            )
+            for local in range(group_k)
+        }
+        for local_item, code in local_codes.items():
+            code = list(code)
+            code[0] = first_token_map[code[0]]
+            combined[int(group_ids[int(local_item)])] = code
+
+        tier_stats[tier] = {
+            "n_items": int(group_ids.size),
+            "m": group_m,
+            "k": group_k,
+            "first_token_offset": first_token_offset,
+            **local_stats,
+        }
+        first_token_offset += group_k
+
+    if len(combined) != len(id2text):
+        raise ValueError(f"Tiered codebook has {len(combined)} items; expected {len(id2text)}")
+    if len({tuple(code) for code in combined.values()}) != len(combined):
+        raise ValueError("Tiered codebook contains collisions")
+    print(f"[Tiered-Huffman] specs={specs} first_level_tokens={first_token_offset}")
+    return combined, {"tiered_groups": tier_stats}
 
 
 @hydra.main(config_path="conf", config_name="config", version_base="1.3")
@@ -172,7 +274,14 @@ def main(cfg: DictConfig) -> None:
     BASE = int(cfg.tokenization.base)
     M = int(cfg.tokenization.m)
     is_ragged = bool(getattr(cfg.tokenization, "adaptive_depth", False))
-    if is_ragged:
+    is_tiered = bool(getattr(cfg.tokenization, "tiered_depth", False))
+    is_variable_length = is_ragged or is_tiered
+    if is_tiered:
+        max_depth = M - 1
+        TOTAL_LEVELS = M
+        eff_M = None
+        max_new_tokens = TOTAL_LEVELS + 1
+    elif is_ragged:
         user_max_depth = getattr(cfg.tokenization, "max_depth", None)
         if user_max_depth is not None:
             max_depth = int(user_max_depth)
@@ -218,7 +327,10 @@ def main(cfg: DictConfig) -> None:
         if len(item_probs) < len(id2text):  # items never seen in train get zero mass
             item_probs = np.pad(item_probs, (0, len(id2text) - len(item_probs)))
         t0 = time.time()
-        res = build_semantic_ids(cfg, id2text, tokenizer, item_probs, item_embs)
+        if is_tiered:
+            res = build_tiered_semantic_ids(cfg, id2text, tokenizer, item_probs, item_embs)
+        else:
+            res = build_semantic_ids(cfg, id2text, tokenizer, item_probs, item_embs)
         if isinstance(res, tuple):
             item2tokseq_ids, tree_stats = res
         else:
@@ -232,7 +344,7 @@ def main(cfg: DictConfig) -> None:
         stats = {
             "n_items": len(codes),
             "n_unique_sids": len({tuple(c) for c in codes}),
-            **({f"prefixes_len{l}": len({tuple(c[:l]) for c in codes}) for l in range(1, TOTAL_LEVELS)} if not is_ragged else {
+            **({f"prefixes_len{l}": len({tuple(c[:l]) for c in codes}) for l in range(1, TOTAL_LEVELS)} if not is_variable_length else {
                 "sid_len_min": int(np.min([len(c) for c in codes])),
                 "sid_len_median": float(np.median([len(c) for c in codes])),
                 "sid_len_max": int(np.max([len(c) for c in codes])),
@@ -271,29 +383,18 @@ def main(cfg: DictConfig) -> None:
     # Compute item_tiers (head/body/tail by interaction frequency) for grouped eval metrics
     item_tiers: Optional[dict] = None
     if item_probs is not None:
-        _items = sorted(item2tokseq_ids.keys())
-        _N = len(_items)
-        if _N > 0:
-            _n_head = max(1, int(round(_N * 0.20)))
-            _n_tail = max(1, int(round(_N * 0.20)))
-            _masses = sorted(
-                [(it, float(item_probs[it]) if it < len(item_probs) else 0.0) for it in _items],
-                key=lambda x: (x[1], -x[0]),
-                reverse=True,
-            )
-            _head_set = {x[0] for x in _masses[:_n_head]}
-            _tail_set  = {x[0] for x in _masses[-_n_tail:]} - _head_set
-            item_tiers = {}
-            for it in _items:
-                if it in _head_set:
-                    item_tiers[it] = "head"
-                elif it in _tail_set:
-                    item_tiers[it] = "tail"
-                else:
-                    item_tiers[it] = "body"
-            print(f"[AST] item_tiers: head={len(_head_set)} body={_N - len(_head_set) - len(_tail_set)} tail={len(_tail_set)}")
+        item_tiers = _build_item_tiers(item2tokseq_ids.keys(), item_probs)
+        tier_counts = Counter(item_tiers.values())
+        print(
+            f"[AST] item_tiers: head={tier_counts['head']} "
+            f"body={tier_counts['body']} tail={tier_counts['tail']}"
+        )
 
-    tokenize_fn = make_seq2seq_tokenize_fn(item2tokseq_ids=item2tokseq_ids, M=eff_M, eos_id=eos_id if is_ragged else None)
+    tokenize_fn = make_seq2seq_tokenize_fn(
+        item2tokseq_ids=item2tokseq_ids,
+        M=eff_M,
+        eos_id=eos_id if is_variable_length else None,
+    )
     tokenized = {
         split: dd[split].map(tokenize_fn, remove_columns=list(cfg.data.remove_cols))
         for split in ["train", "validation", "test"]
@@ -323,10 +424,10 @@ def main(cfg: DictConfig) -> None:
     gen.num_return_sequences = int(cfg.generation.num_return_sequences)
     gen.do_sample = bool(cfg.generation.do_sample)
     gen.max_new_tokens = max_new_tokens
-    gen.min_new_tokens = 2 if is_ragged else eff_M
+    gen.min_new_tokens = 2 if is_variable_length else eff_M
 
     prefix_allowed_tokens = make_prefix_allowed_tokens_fn(
-        build_item_code_trie(item2tokseq_ids, eos_id=eos_id if is_ragged else None),
+        build_item_code_trie(item2tokseq_ids, eos_id=eos_id if is_variable_length else None),
         pad_id=pad_id,
         eos_id=eos_id,
         decoder_start_id=model.config.decoder_start_token_id,
@@ -370,7 +471,7 @@ def main(cfg: DictConfig) -> None:
             item2tokseq_ids=item2tokseq_ids,
             pad_id=pad_id,
             M=eff_M,
-            eos_id=eos_id if is_ragged else None,
+            eos_id=eos_id if is_variable_length else None,
             k_values=(5, 10),
             item_tiers=item_tiers,
         ),
@@ -410,9 +511,20 @@ def main(cfg: DictConfig) -> None:
             {
                 "category": category,
                 "variant": str(cfg.tokenization.variant),
-                "m": "ragged" if is_ragged else M,
-                "max_depth": max_depth if is_ragged else M - 1,
+                "m": "tiered" if is_tiered else ("ragged" if is_ragged else M),
+                "max_depth": max_depth if is_variable_length else M - 1,
                 "base": BASE,
+                **(
+                    {
+                        "tiered_specs": {
+                            "head": {"m": int(cfg.tokenization.tier_head_m), "k": int(cfg.tokenization.tier_head_k)},
+                            "body": {"m": int(cfg.tokenization.tier_body_m), "k": int(cfg.tokenization.tier_body_k)},
+                            "tail": {"m": int(cfg.tokenization.tier_tail_m), "k": int(cfg.tokenization.tier_tail_k)},
+                        }
+                    }
+                    if is_tiered
+                    else {}
+                ),
                 "min_share_prob": cfg.tokenization.min_share_prob,
                 "use_item_mass": bool(cfg.tokenization.use_item_mass),
                 **_test_floats,

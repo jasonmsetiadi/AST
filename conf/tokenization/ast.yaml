@@ -21,6 +21,15 @@ adaptive_depth: false                 # true for variable-depth tree stopping wh
 max_depth: 6                          # maximum tree depth ceiling
 max_items_per_leaf: 4                 # tau_stop: stop splitting when cluster size <= max_items_per_leaf
 
+# ---- popularity-tiered variable depth/branching ----
+tiered_depth: false                   # independent head/body/tail HKMeans subtrees
+tier_head_m: 3
+tier_head_k: 48
+tier_body_m: 4
+tier_body_k: 20
+tier_tail_m: 5
+tier_tail_k: 10
+
 max_iter_kmeans: 50
 n_init_kmeans: 10
 silhouette_metric: euclidean
