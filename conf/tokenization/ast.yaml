@@ -23,12 +23,14 @@ max_items_per_leaf: 4                 # tau_stop: stop splitting when cluster si
 
 # ---- popularity-tiered variable depth/branching ----
 tiered_depth: false                   # independent head/body/tail HKMeans subtrees
+shared_tiered_depth: false            # one shared tree with tier-dependent stopping
 tier_head_m: 3
 tier_head_k: 48
 tier_body_m: 4
 tier_body_k: 20
 tier_tail_m: 5
 tier_tail_k: 10
+shared_tier_k: [48, 20, 10, 10]       # branching at shared tree levels 0..3
 
 max_iter_kmeans: 50
 n_init_kmeans: 10

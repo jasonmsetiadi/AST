@@ -243,6 +243,77 @@ def build_tiered_semantic_ids(cfg, id2text, tokenizer, item_probs, item_embs):
     return combined, {"tiered_groups": tier_stats}
 
 
+def build_shared_tiered_semantic_ids(cfg, id2text, tokenizer, item_probs, item_embs):
+    """Build one shared tree, then terminate popularity tiers at different depths."""
+    t = cfg.tokenization
+    tiers = _build_item_tiers(range(len(id2text)), item_probs)
+    target_lengths = {
+        "head": int(t.tier_head_m),
+        "body": int(t.tier_body_m),
+        "tail": int(t.tier_tail_m),
+    }
+    max_m = max(target_lengths.values())
+    k_schedule = [int(value) for value in t.shared_tier_k]
+    if len(k_schedule) < max_m - 1:
+        raise ValueError(f"shared_tier_k needs at least {max_m - 1} levels; got {k_schedule}")
+
+    result = build_semantic_ids(
+        cfg,
+        id2text,
+        tokenizer,
+        item_probs,
+        item_embs,
+        m_override=max_m,
+        fixed_k_override=k_schedule,
+        adaptive_depth_override=False,
+    )
+    full_codes, tree_stats = result if isinstance(result, tuple) else (result, {})
+
+    # Items share the original semantic prefixes. At a tier's stopping level,
+    # terminal suffix tokens are placed above the range used by tiers that keep
+    # splitting, so a terminal code can coexist with longer children in the trie.
+    terminal_buckets = {}
+    for item, full_code in full_codes.items():
+        tier = tiers[int(item)]
+        target_m = target_lengths[tier]
+        prefix = tuple(full_code[: target_m - 1])
+        terminal_buckets.setdefault((tier, prefix), []).append(int(item))
+
+    combined = {}
+    base = int(t.base)
+    for (tier, prefix), items in terminal_buckets.items():
+        target_m = target_lengths[tier]
+        suffix_level = target_m - 1
+        continuation_k = k_schedule[suffix_level] if target_m < max_m else 0
+        if continuation_k + len(items) > base:
+            raise ValueError(
+                f"Shared tier leaf {prefix} needs {len(items)} suffixes after "
+                f"{continuation_k} continuation tokens, base={base}"
+            )
+        for suffix_index, item in enumerate(sorted(items), start=continuation_k):
+            suffix_token = tokenizer.convert_tokens_to_ids(f"<c{suffix_level}_{suffix_index}>")
+            combined[item] = list(prefix) + [suffix_token]
+
+    if len(combined) != len(id2text):
+        raise ValueError(f"Shared tiered codebook has {len(combined)} items; expected {len(id2text)}")
+    if len({tuple(code) for code in combined.values()}) != len(combined):
+        raise ValueError("Shared tiered codebook contains collisions")
+
+    lengths = Counter(len(code) for code in combined.values())
+    print(
+        f"[Shared-Huffman] k_schedule={k_schedule[:max_m - 1]} "
+        f"target_lengths={target_lengths} item_lengths={dict(sorted(lengths.items()))}"
+    )
+    return combined, {
+        "shared_tiered": {
+            "k_schedule": k_schedule[: max_m - 1],
+            "target_lengths": target_lengths,
+            "item_length_counts": dict(sorted(lengths.items())),
+            "full_tree_stats": tree_stats,
+        }
+    }
+
+
 @hydra.main(config_path="conf", config_name="config", version_base="1.3")
 def main(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
@@ -275,8 +346,11 @@ def main(cfg: DictConfig) -> None:
     M = int(cfg.tokenization.m)
     is_ragged = bool(getattr(cfg.tokenization, "adaptive_depth", False))
     is_tiered = bool(getattr(cfg.tokenization, "tiered_depth", False))
-    is_variable_length = is_ragged or is_tiered
-    if is_tiered:
+    is_shared_tiered = bool(getattr(cfg.tokenization, "shared_tiered_depth", False))
+    if is_tiered and is_shared_tiered:
+        raise ValueError("tiered_depth and shared_tiered_depth cannot both be enabled")
+    is_variable_length = is_ragged or is_tiered or is_shared_tiered
+    if is_tiered or is_shared_tiered:
         max_depth = M - 1
         TOTAL_LEVELS = M
         eff_M = None
@@ -327,7 +401,9 @@ def main(cfg: DictConfig) -> None:
         if len(item_probs) < len(id2text):  # items never seen in train get zero mass
             item_probs = np.pad(item_probs, (0, len(id2text) - len(item_probs)))
         t0 = time.time()
-        if is_tiered:
+        if is_shared_tiered:
+            res = build_shared_tiered_semantic_ids(cfg, id2text, tokenizer, item_probs, item_embs)
+        elif is_tiered:
             res = build_tiered_semantic_ids(cfg, id2text, tokenizer, item_probs, item_embs)
         else:
             res = build_semantic_ids(cfg, id2text, tokenizer, item_probs, item_embs)
@@ -372,7 +448,11 @@ def main(cfg: DictConfig) -> None:
                 f"Tail Isolated: {pop_stats['tail_item_experience']['pct_tail_items_isolated_in_pure_tail']}%"
             )
 
-        summary = {k: v for k, v in stats.items() if k not in ("leaf_sizes", "split_records", "popularity_composition")}
+        summary = {
+            k: v
+            for k, v in stats.items()
+            if k not in ("leaf_sizes", "split_records", "popularity_composition", "tiered_groups", "shared_tiered")
+        }
         print(f"[AST] {summary}")
         with open(out_dir / "sids_stats.json", "w") as f:
             json.dump(stats, f, indent=2)
@@ -511,7 +591,11 @@ def main(cfg: DictConfig) -> None:
             {
                 "category": category,
                 "variant": str(cfg.tokenization.variant),
-                "m": "tiered" if is_tiered else ("ragged" if is_ragged else M),
+                "m": (
+                    "shared_tiered"
+                    if is_shared_tiered
+                    else ("tiered" if is_tiered else ("ragged" if is_ragged else M))
+                ),
                 "max_depth": max_depth if is_variable_length else M - 1,
                 "base": BASE,
                 **(
@@ -522,7 +606,12 @@ def main(cfg: DictConfig) -> None:
                             "tail": {"m": int(cfg.tokenization.tier_tail_m), "k": int(cfg.tokenization.tier_tail_k)},
                         }
                     }
-                    if is_tiered
+                    if is_tiered or is_shared_tiered
+                    else {}
+                ),
+                **(
+                    {"shared_tier_k": [int(value) for value in cfg.tokenization.shared_tier_k]}
+                    if is_shared_tiered
                     else {}
                 ),
                 "min_share_prob": cfg.tokenization.min_share_prob,
