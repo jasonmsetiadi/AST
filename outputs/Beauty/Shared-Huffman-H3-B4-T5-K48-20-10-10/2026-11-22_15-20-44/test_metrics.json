@@ -1,0 +1,70 @@
+{
+  "category": "Beauty",
+  "variant": "Shared-Huffman-H3-B4-T5-K48-20-10-10",
+  "m": "shared_tiered",
+  "max_depth": 4,
+  "base": 4096,
+  "tiered_specs": {
+    "head": {
+      "m": 3,
+      "k": 48
+    },
+    "body": {
+      "m": 4,
+      "k": 20
+    },
+    "tail": {
+      "m": 5,
+      "k": 10
+    }
+  },
+  "shared_tier_k": [
+    48,
+    20,
+    10,
+    10
+  ],
+  "min_share_prob": null,
+  "use_item_mass": false,
+  "test_loss": 1.5764714479446411,
+  "test_recall@5": 0.009927111747082233,
+  "test_recall@10": 0.017886687832580603,
+  "test_ndcg@5": 0.006038983329395349,
+  "test_ndcg@10": 0.008614518038436162,
+  "test_head_recall@5": 0.00011161960040183056,
+  "test_head_ndcg@5": 7.042412697527151e-05,
+  "test_head_recall@10": 0.00022323920080366113,
+  "test_head_ndcg@10": 0.00010763066044254836,
+  "test_body_recall@5": 0.0,
+  "test_body_ndcg@5": 0.0,
+  "test_body_recall@10": 0.0028624903666189584,
+  "test_body_ndcg@10": 0.0009141075108344482,
+  "test_tail_recall@5": 0.05114556815551956,
+  "test_tail_ndcg@5": 0.03110827457572245,
+  "test_tail_recall@10": 0.08609118259662116,
+  "test_tail_ndcg@10": 0.042439103282974726,
+  "test_runtime": 70.3107,
+  "test_samples_per_second": 318.06,
+  "test_steps_per_second": 1.252,
+  "epoch": 190.0,
+  "test_head_count": 8959,
+  "test_body_count": 9083,
+  "test_tail_count": 4321,
+  "val_recall@5": 0.00889862719670885,
+  "val_recall@10": 0.014130483387738675,
+  "val_ndcg@5": 0.006025181480112259,
+  "val_ndcg@10": 0.007720250989297734,
+  "val_head_recall@5": 0.0,
+  "val_head_ndcg@5": 0.0,
+  "val_head_recall@10": 9.582215408202377e-05,
+  "val_head_ndcg@10": 3.1940718027341254e-05,
+  "val_body_recall@5": 0.0,
+  "val_body_ndcg@5": 0.0,
+  "val_body_recall@10": 0.002513136851724926,
+  "val_body_ndcg@10": 0.0008072212931898579,
+  "val_tail_recall@5": 0.06271667191931926,
+  "val_tail_ndcg@5": 0.042464901808934905,
+  "val_tail_recall@10": 0.09234163252442483,
+  "val_tail_ndcg@10": 0.05207949080987957,
+  "best_epoch": 140.0
+}
