@@ -578,7 +578,11 @@ def main(cfg: DictConfig) -> None:
             tree_structure=tree_structure,
             tokenizer=tokenizer,
             init_item2tokseq_ids=item2tokseq_ids,
+            method=str(getattr(joint_cfg, "method", "ste")),
             temperature=float(joint_cfg.temperature),
+            min_temperature=float(getattr(joint_cfg, "min_temperature", 0.1)),
+            gumbel_noise_scale=float(getattr(joint_cfg, "gumbel_noise_scale", 1.0)),
+            min_gumbel_noise_scale=float(getattr(joint_cfg, "min_gumbel_noise_scale", 0.0)),
             learn_item_embs=bool(joint_cfg.learn_item_embs),
         )
         joint_model = JointT5Wrapper(
@@ -613,6 +617,7 @@ def main(cfg: DictConfig) -> None:
             k_values=(5, 10),
             item_tiers=item_tiers,
             suffix_refresh_steps=int(joint_cfg.suffix_refresh_steps),
+            anneal_steps=None if getattr(joint_cfg, "anneal_steps", None) is None else int(joint_cfg.anneal_steps),
         )
     else:
         trainer = TrieConstrainedSeq2SeqTrainer(

@@ -15,7 +15,7 @@ from model import TrieConstrainedSeq2SeqTrainer, build_item_code_trie, make_pref
 
 
 class DifferentiableSemanticTree(nn.Module):
-    """Fixed-topology hierarchical tree with learnable per-node centroids and Naive STE routing."""
+    """Fixed-topology hierarchical tree with learnable per-node centroids and STE / Gumbel-Softmax routing."""
 
     def __init__(
         self,
@@ -24,14 +24,27 @@ class DifferentiableSemanticTree(nn.Module):
         tree_structure: dict,
         tokenizer,
         init_item2tokseq_ids: Dict[int, List[int]],
+        method: str = "ste",
         temperature: float = 1.0,
+        min_temperature: float = 0.1,
+        gumbel_noise_scale: float = 1.0,
+        min_gumbel_noise_scale: float = 0.0,
         learn_item_embs: bool = True,
     ):
         super().__init__()
+        method = str(method).lower()
+        if method not in ("ste", "gumbel"):
+            raise ValueError(f"Unknown joint_training.method={method!r}; expected 'ste' or 'gumbel'.")
+        self.method = method
         self.L = int(tree_structure["L"])
         self.m = int(tree_structure["m"])
         self.base = int(tree_structure["base"])
+        self.init_temperature = float(temperature)
+        self.min_temperature = float(min_temperature)
         self.temperature = float(temperature)
+        self.init_noise_scale = float(gumbel_noise_scale)
+        self.min_noise_scale = float(min_gumbel_noise_scale)
+        self.noise_scale = float(gumbel_noise_scale)
         self.learn_item_embs = bool(learn_item_embs)
 
         embs_t = torch.tensor(np.asarray(item_embs, dtype=np.float32), dtype=torch.float32)
@@ -101,6 +114,12 @@ class DifferentiableSemanticTree(nn.Module):
             x = F.normalize(x + self.item_emb_delta[item_ids], dim=-1)
         return x
 
+    def update_anneal_state(self, progress: float) -> None:
+        """Linearly anneal temperature and Gumbel noise scale over progress in [0, 1]."""
+        p = max(0.0, min(1.0, float(progress)))
+        self.temperature = self.init_temperature + p * (self.min_temperature - self.init_temperature)
+        self.noise_scale = self.init_noise_scale + p * (self.min_noise_scale - self.init_noise_scale)
+
     def forward(
         self,
         item_ids: torch.Tensor,
@@ -131,12 +150,17 @@ class DifferentiableSemanticTree(nn.Module):
             vmask = self._valid_mask(lvl)[node_id]  # [..., K_max_l]
 
             dist2 = ((x.unsqueeze(-2) - C) ** 2).sum(dim=-1)
-            logits = (-dist2 / self.temperature).masked_fill(~vmask, -1e9)
+            raw_logits = -dist2
+            if self.training and self.method == "gumbel" and self.noise_scale > 0.0:
+                u = torch.rand_like(raw_logits).clamp_(1e-6, 1.0 - 1e-6)
+                gumbel = -torch.log(-torch.log(u))
+                raw_logits = raw_logits + self.noise_scale * gumbel
+            logits = (raw_logits / max(self.temperature, 1e-6)).masked_fill(~vmask, -1e9)
             p_soft = F.softmax(logits, dim=-1)
 
             c_hard = logits.argmax(dim=-1)
             p_hard = F.one_hot(c_hard, num_classes=C.size(-2)).to(p_soft.dtype)
-            p_ste = p_hard + (p_soft - p_soft.detach())  # Naive STE
+            p_ste = p_hard + (p_soft - p_soft.detach())  # ST forward, soft/Gumbel-soft backward
 
             # Commitment loss: anchor items and assigned centroids
             assigned_c = (p_hard.unsqueeze(-1) * C).sum(dim=-2)
@@ -266,6 +290,12 @@ class JointT5Wrapper(nn.Module):
         level_embs.append(self.t5.shared(suffix_tok_ids))
         return torch.stack(level_embs, dim=-2)
 
+    def update_anneal_state(self, progress: float) -> None:
+        """Linearly anneal temperature and Gumbel noise scale over progress in [0, 1]."""
+        p = max(0.0, min(1.0, float(progress)))
+        self.temperature = self.init_temperature + p * (self.min_temperature - self.init_temperature)
+        self.noise_scale = self.init_noise_scale + p * (self.min_noise_scale - self.init_noise_scale)
+
     def forward(
         self,
         history_item_ids: torch.Tensor,
@@ -330,6 +360,7 @@ class JointTrieConstrainedSeq2SeqTrainer(TrieConstrainedSeq2SeqTrainer):
         k_values=(5, 10),
         item_tiers: Optional[Dict[int, str]] = None,
         suffix_refresh_steps: int = 200,
+        anneal_steps: Optional[int] = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -338,7 +369,9 @@ class JointTrieConstrainedSeq2SeqTrainer(TrieConstrainedSeq2SeqTrainer):
         self._joint_k_values = tuple(k_values)
         self._joint_item_tiers = item_tiers
         self._suffix_refresh_steps = int(suffix_refresh_steps)
+        self._anneal_steps = None if anneal_steps is None else int(anneal_steps)
         self._last_refresh_step: int = -1
+        self._last_anneal_step: int = -1
         self._current_item2tokseq_ids: Optional[Dict[int, List[int]]] = None
 
     def _unwrap_joint(self, model=None) -> JointT5Wrapper:
@@ -367,6 +400,14 @@ class JointTrieConstrainedSeq2SeqTrainer(TrieConstrainedSeq2SeqTrainer):
         )
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        joint = self._unwrap_joint(model)
+        if model.training and self.state.global_step != self._last_anneal_step:
+            self._last_anneal_step = self.state.global_step
+            if joint.tree.method == "gumbel":
+                total_steps = self._anneal_steps if self._anneal_steps is not None else max(1, int(self.state.max_steps))
+                progress = min(1.0, float(self.state.global_step) / float(max(1, total_steps)))
+                joint.tree.update_anneal_state(progress)
+
         if (
             model.training
             and self._suffix_refresh_steps > 0
@@ -375,7 +416,7 @@ class JointTrieConstrainedSeq2SeqTrainer(TrieConstrainedSeq2SeqTrainer):
             and self.state.global_step % self._suffix_refresh_steps == 0
         ):
             self._last_refresh_step = self.state.global_step
-            self._unwrap_joint(model).tree.export_item2tokseq_ids()
+            joint.tree.export_item2tokseq_ids()
         outputs = model(**inputs)
         loss = outputs.loss
         return (loss, outputs) if return_outputs else loss

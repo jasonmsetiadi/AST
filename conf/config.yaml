@@ -17,7 +17,12 @@ generation:
 
 joint_training:
   enabled: false
+  method: ste                      # ste | gumbel
   temperature: 1.0
+  min_temperature: 0.1             # used when method=gumbel
+  gumbel_noise_scale: 1.0          # used when method=gumbel
+  min_gumbel_noise_scale: 0.0      # used when method=gumbel
+  anneal_steps: null               # null = anneal over total training steps
   learn_item_embs: true
   commit_loss_weight: 0.0
   balance_loss_weight: 0.0
