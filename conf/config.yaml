@@ -15,6 +15,14 @@ generation:
   num_return_sequences: 10
   do_sample: false
 
+joint_training:
+  enabled: false
+  temperature: 1.0
+  learn_item_embs: true
+  commit_loss_weight: 0.0
+  balance_loss_weight: 0.0
+  suffix_refresh_steps: 200
+
 debug:
   train_select: null               # e.g. [0, 1, 2] to train on a few examples
   eval_limit: null                 # e.g. 500 to evaluate on the first 500 users (quick checks only)

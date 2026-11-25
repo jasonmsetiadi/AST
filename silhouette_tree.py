@@ -250,6 +250,7 @@ def build_item2tokseq_ids_silhouette_tree(
     print_stats: bool = True,
     show_examples: int = 5,
     return_tree_stats: bool = False,
+    return_tree_structure: bool = False,
 ) -> dict[int, list[int]] | tuple[dict[int, list[int]], dict]:
     """
     Build AST semantic IDs. Returns ``item_id -> [token_id] * m`` (unique per item).
@@ -642,16 +643,41 @@ def build_item2tokseq_ids_silhouette_tree(
             return 1, None, None
         return int(best["K_eff"]), np.asarray(best["labels"], dtype=np.int32), best
 
-    def _recurse(level: int, item_ids: np.ndarray, *, node_seed: int) -> None:
+    tree_nodes_by_level: list[list[dict]] = [[] for _ in range(L)]
+
+    def _alloc_tree_node(level: int) -> int:
+        nid = len(tree_nodes_by_level[level])
+        tree_nodes_by_level[level].append({})
+        return nid
+
+    def _fill_passthrough_chain(level: int, item_ids: np.ndarray, node_id: int | None) -> None:
+        if not return_tree_structure or node_id is None or level >= L:
+            return
+        center = embs[item_ids].mean(axis=0, keepdims=True).astype(np.float32)
+        if level + 1 < L:
+            child_nid = _alloc_tree_node(level + 1)
+            children = [child_nid]
+            _fill_passthrough_chain(level + 1, item_ids, child_nid)
+        else:
+            children = [-1]
+        tree_nodes_by_level[level][node_id] = {
+            "centroids": center,
+            "K": 1,
+            "children": children,
+        }
+
+    def _recurse(level: int, item_ids: np.ndarray, *, node_seed: int, node_id: int | None = None) -> None:
         if level >= L:
             return
         node_counts[level] += 1
         n = int(item_ids.size)
         if n <= 1:
             leaf_counts[level] += 1
+            _fill_passthrough_chain(level, item_ids, node_id)
             return
         if density_driven_k and n <= int(min_items_to_split):
             leaf_counts[level] += 1
+            _fill_passthrough_chain(level, item_ids, node_id)
             return
 
         X = embs[item_ids]
@@ -661,6 +687,7 @@ def build_item2tokseq_ids_silhouette_tree(
             min_k_eff = _capacity_lower_bound_k(n, level)
             if K_target < max(2, min_k_eff):
                 leaf_counts[level] += 1
+                _fill_passthrough_chain(level, item_ids, node_id)
                 return
             sample_weight = None
             if p_items is not None:
@@ -685,6 +712,7 @@ def build_item2tokseq_ids_silhouette_tree(
             max_allowed = min(int(k_cap), n - 1, int(base))
             if max_allowed < 2:
                 leaf_counts[level] += 1
+                _fill_passthrough_chain(level, item_ids, node_id)
                 return
             K_star_clamped = int(np.clip(round(K_star), 2, max_allowed))
             K_min = max(2, K_star_clamped - int(k_window_delta))
@@ -698,6 +726,7 @@ def build_item2tokseq_ids_silhouette_tree(
             min_k_eff = _capacity_lower_bound_k(n, level)
             if K_max < max(2, min_k_eff):
                 leaf_counts[level] += 1
+                _fill_passthrough_chain(level, item_ids, node_id)
                 return
 
             K, labels, diag = _pick_best_k(
@@ -707,8 +736,19 @@ def build_item2tokseq_ids_silhouette_tree(
         if K <= 1 or labels is None or diag is None:
             leaf_counts[level] += 1
             if stop_recursion_if_no_split:
+                _fill_passthrough_chain(level, item_ids, node_id)
                 return
-            _recurse(level + 1, item_ids, node_seed=int(node_seed) + 101)
+            if return_tree_structure and node_id is not None:
+                center = X.mean(axis=0, keepdims=True).astype(np.float32)
+                child_nid = _alloc_tree_node(level + 1) if level + 1 < L else -1
+                tree_nodes_by_level[level][node_id] = {
+                    "centroids": center,
+                    "K": 1,
+                    "children": [child_nid],
+                }
+                _recurse(level + 1, item_ids, node_seed=int(node_seed) + 101, node_id=child_nid if child_nid >= 0 else None)
+            else:
+                _recurse(level + 1, item_ids, node_seed=int(node_seed) + 101)
             return
 
         if print_each_clustering:
@@ -741,11 +781,35 @@ def build_item2tokseq_ids_silhouette_tree(
         split_counts[level] += 1
         chosen_k_hist[level][int(K)] += 1
 
+        children_nids: list[int] = []
+        if return_tree_structure and node_id is not None:
+            centers = _centers_from_labels(X, _node_local_probs(item_ids), labels, int(K))
+            if centers is None:
+                centers = np.zeros((int(K), int(X.shape[1])), dtype=np.float32)
+            else:
+                centers = centers.astype(np.float32)
+
         for c in range(int(K)):
             child_ids = item_ids[labels == c]
             if child_ids.size == 0:
+                if return_tree_structure and node_id is not None:
+                    children_nids.append(-1)
                 continue
-            _recurse(level + 1, child_ids, node_seed=int(node_seed) + 131 + 17 * c)
+            if return_tree_structure and node_id is not None and level + 1 < L:
+                child_nid = _alloc_tree_node(level + 1)
+                children_nids.append(child_nid)
+                _recurse(level + 1, child_ids, node_seed=int(node_seed) + 131 + 17 * c, node_id=child_nid)
+            else:
+                if return_tree_structure and node_id is not None:
+                    children_nids.append(-1)
+                _recurse(level + 1, child_ids, node_seed=int(node_seed) + 131 + 17 * c)
+
+        if return_tree_structure and node_id is not None:
+            tree_nodes_by_level[level][node_id] = {
+                "centroids": centers,
+                "K": int(K),
+                "children": children_nids,
+            }
 
     if adaptive_depth:
         # Variable-depth tree (AST-Ragged)
@@ -836,7 +900,8 @@ def build_item2tokseq_ids_silhouette_tree(
             return ragged_item2tokseq_ids, _build_tree_stats()
         return ragged_item2tokseq_ids
 
-    _recurse(0, np.arange(N, dtype=np.int32), node_seed=int(seed))
+    root_nid = _alloc_tree_node(0) if return_tree_structure else None
+    _recurse(0, np.arange(N, dtype=np.int32), node_seed=int(seed), node_id=root_nid)
 
     # ------------------------------------------------------------------
     # 4) group items by prefix
@@ -896,5 +961,20 @@ def build_item2tokseq_ids_silhouette_tree(
             print("[sid-collision AFTER suffix] none")
 
     if return_tree_stats:
-        return item2tokseq_ids, _build_tree_stats()
+        stats = _build_tree_stats()
+        if return_tree_structure:
+            stats["tree_structure"] = {
+                "L": L,
+                "m": m,
+                "base": base,
+                "nodes_by_level": tree_nodes_by_level,
+            }
+        return item2tokseq_ids, stats
+    if return_tree_structure:
+        return item2tokseq_ids, {
+            "L": L,
+            "m": m,
+            "base": base,
+            "nodes_by_level": tree_nodes_by_level,
+        }
     return item2tokseq_ids

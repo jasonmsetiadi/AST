@@ -28,6 +28,12 @@ from transformers import DataCollatorForSeq2Seq, EarlyStoppingCallback, Seq2SeqT
 
 from data import build_amazon2014_seq_splits, build_asin2text, load_amazon2014_meta, print_split_stats
 from evaluation import build_code_metrics
+from joint_tree import (
+    DifferentiableSemanticTree,
+    JointDataCollator,
+    JointT5Wrapper,
+    JointTrieConstrainedSeq2SeqTrainer,
+)
 from model import (
     TrieConstrainedSeq2SeqTrainer,
     build_item_code_trie,
@@ -110,6 +116,7 @@ def build_semantic_ids(
     m_override: Optional[int] = None,
     fixed_k_override: Optional[int] = None,
     adaptive_depth_override: Optional[bool] = None,
+    return_tree_structure: bool = False,
 ):
     t = cfg.tokenization
     m_value = int(t.m) if m_override is None else int(m_override)
@@ -177,6 +184,7 @@ def build_semantic_ids(
         print_each_clustering=bool(t.print_each_clustering),
         print_stats=bool(t.print_stats),
         return_tree_stats=True,
+        return_tree_structure=return_tree_structure,
     )
 
 
@@ -376,9 +384,18 @@ def main(cfg: DictConfig) -> None:
     pad_id, eos_id = tokenizer.pad_token_id, tokenizer.eos_token_id
 
     # ---- AST semantic IDs ----
+    joint_cfg = getattr(cfg, "joint_training", None)
+    use_joint = bool(getattr(joint_cfg, "enabled", False))
+    if use_joint:
+        if is_variable_length:
+            raise ValueError("joint_training.enabled=true currently supports fixed-length trees only.")
+        if cfg.tokenization.sids_path:
+            raise ValueError("joint_training.enabled=true requires building initial tree centroids (sids_path must be null).")
+
     asin2text = build_asin2text(meta, asin_set=asin_set, cols=list(cfg.data.cols_to_use))
     id2text = build_id2text_from_item2token(item2token, asin2text)
     sids_path = cfg.tokenization.sids_path
+    tree_structure = None
     if sids_path:  # reuse semantic IDs built by an earlier run (e.g. stop_after=sids)
         with open(Path(get_original_cwd()) / str(sids_path), "rb") as f:
             item2tokseq_ids = pickle.load(f)
@@ -406,11 +423,13 @@ def main(cfg: DictConfig) -> None:
         elif is_tiered:
             res = build_tiered_semantic_ids(cfg, id2text, tokenizer, item_probs, item_embs)
         else:
-            res = build_semantic_ids(cfg, id2text, tokenizer, item_probs, item_embs)
+            res = build_semantic_ids(cfg, id2text, tokenizer, item_probs, item_embs, return_tree_structure=use_joint)
         if isinstance(res, tuple):
             item2tokseq_ids, tree_stats = res
         else:
             item2tokseq_ids, tree_stats = res, {}
+        if isinstance(tree_stats, dict) and "tree_structure" in tree_stats:
+            tree_structure = tree_stats.pop("tree_structure")
         sid_seconds = time.time() - t0
         with open(out_dir / "item2tokseq_ids.pkl", "wb") as f:
             pickle.dump(item2tokseq_ids, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -470,15 +489,27 @@ def main(cfg: DictConfig) -> None:
             f"body={tier_counts['body']} tail={tier_counts['tail']}"
         )
 
-    tokenize_fn = make_seq2seq_tokenize_fn(
-        item2tokseq_ids=item2tokseq_ids,
-        M=eff_M,
-        eos_id=eos_id if is_variable_length else None,
-    )
-    tokenized = {
-        split: dd[split].map(tokenize_fn, remove_columns=list(cfg.data.remove_cols))
-        for split in ["train", "validation", "test"]
-    }
+    if use_joint:
+        tokenized = {
+            split: dd[split].map(
+                lambda ex: {
+                    "history_item_ids": [int(x) for x in (ex.get("history") or [])],
+                    "target_item_id": int(ex["label"]),
+                },
+                remove_columns=list(cfg.data.remove_cols),
+            )
+            for split in ["train", "validation", "test"]
+        }
+    else:
+        tokenize_fn = make_seq2seq_tokenize_fn(
+            item2tokseq_ids=item2tokseq_ids,
+            M=eff_M,
+            eos_id=eos_id if is_variable_length else None,
+        )
+        tokenized = {
+            split: dd[split].map(tokenize_fn, remove_columns=list(cfg.data.remove_cols))
+            for split in ["train", "validation", "test"]
+        }
 
     # ---- model ----
     mc = cfg.model
@@ -538,31 +569,82 @@ def main(cfg: DictConfig) -> None:
             )
         )
 
-    trainer = TrieConstrainedSeq2SeqTrainer(
-        model=model,
-        args=Seq2SeqTrainingArguments(**OmegaConf.to_container(cfg.training.hf, resolve=True)),
-        processing_class=tokenizer,
-        data_collator=DataCollatorForSeq2Seq(
-            tokenizer=tokenizer, model=model, padding=True, label_pad_token_id=DEFAULT_IGN_ID, return_tensors="pt"
-        ),
-        train_dataset=train_ds,
-        eval_dataset=tokenized["validation"],
-        compute_metrics=build_code_metrics(
-            item2tokseq_ids=item2tokseq_ids,
+    hf_args = Seq2SeqTrainingArguments(**OmegaConf.to_container(cfg.training.hf, resolve=True))
+    if use_joint:
+        assert tree_structure is not None
+        hf_args.remove_unused_columns = False
+        diff_tree = DifferentiableSemanticTree(
+            item_embs=item_embs,
+            tree_structure=tree_structure,
+            tokenizer=tokenizer,
+            init_item2tokseq_ids=item2tokseq_ids,
+            temperature=float(joint_cfg.temperature),
+            learn_item_embs=bool(joint_cfg.learn_item_embs),
+        )
+        joint_model = JointT5Wrapper(
+            tree=diff_tree,
+            t5=model,
             pad_id=pad_id,
-            M=eff_M,
-            eos_id=eos_id if is_variable_length else None,
+            commit_loss_weight=float(joint_cfg.commit_loss_weight),
+            balance_loss_weight=float(joint_cfg.balance_loss_weight),
+        )
+        print_model_parameters(joint_model)
+        trainer = JointTrieConstrainedSeq2SeqTrainer(
+            model=joint_model,
+            args=hf_args,
+            processing_class=tokenizer,
+            data_collator=JointDataCollator(),
+            train_dataset=train_ds,
+            eval_dataset=tokenized["validation"],
+            compute_metrics=build_code_metrics(
+                item2tokseq_ids=item2tokseq_ids,
+                pad_id=pad_id,
+                M=eff_M,
+                eos_id=None,
+                k_values=(5, 10),
+                item_tiers=item_tiers,
+            ),
+            callbacks=callbacks,
+            prefix_allowed_tokens_fn=prefix_allowed_tokens,
+            gen_M=eff_M,
+            max_new_tokens=max_new_tokens,
+            pad_id=pad_id,
+            m=M,
             k_values=(5, 10),
             item_tiers=item_tiers,
-        ),
-        callbacks=callbacks,
-        prefix_allowed_tokens_fn=prefix_allowed_tokens,
-        gen_M=eff_M,
-        max_new_tokens=max_new_tokens,
-    )
+            suffix_refresh_steps=int(joint_cfg.suffix_refresh_steps),
+        )
+    else:
+        trainer = TrieConstrainedSeq2SeqTrainer(
+            model=model,
+            args=hf_args,
+            processing_class=tokenizer,
+            data_collator=DataCollatorForSeq2Seq(
+                tokenizer=tokenizer, model=model, padding=True, label_pad_token_id=DEFAULT_IGN_ID, return_tensors="pt"
+            ),
+            train_dataset=train_ds,
+            eval_dataset=tokenized["validation"],
+            compute_metrics=build_code_metrics(
+                item2tokseq_ids=item2tokseq_ids,
+                pad_id=pad_id,
+                M=eff_M,
+                eos_id=eos_id if is_variable_length else None,
+                k_values=(5, 10),
+                item_tiers=item_tiers,
+            ),
+            callbacks=callbacks,
+            prefix_allowed_tokens_fn=prefix_allowed_tokens,
+            gen_M=eff_M,
+            max_new_tokens=max_new_tokens,
+        )
     if cfg.debug.stop_at_step is not None:
         trainer.add_callback(_StopAtStep(int(cfg.debug.stop_at_step)))
     trainer.train()
+
+    if use_joint:
+        final_sids = trainer._unwrap_joint().tree.export_item2tokseq_ids()
+        with open(out_dir / "item2tokseq_ids_joint.pkl", "wb") as f:
+            pickle.dump(final_sids, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     if cfg.debug.stop_at_step is not None:  # quick check: report the training-loss curve and stop
         losses = {f"loss@{h['step']}": h["loss"] for h in trainer.state.log_history if "loss" in h}
